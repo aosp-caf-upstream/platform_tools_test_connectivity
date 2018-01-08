@@ -48,14 +48,15 @@ class TelLivePostflightTest(TelephonyBaseTest):
     def test_check_crash(self):
         msg = ""
         for ad in self.android_devices:
-            post_crash = ad.check_crash_report(self.test_id, None, False)
+            post_crash = ad.check_crash_report(self.test_id)
             pre_crash = getattr(ad, "crash_report_preflight", [])
             crash_diff = list(set(post_crash).difference(set(pre_crash)))
             if crash_diff:
                 msg += "%s find new crash reports %s " % (ad.serial,
                                                           crash_diff)
                 ad.log.error("Find new crash reports %s", crash_diff)
-                crash_path = os.path.join(ad.log_path, self.test_id, "Crashes")
+                crash_path = os.path.join(ad.log_path, self.test_name,
+                                          "Crashes")
                 utils.create_dir(crash_path)
                 ad.pull_files(crash_diff, crash_path)
         if msg:
@@ -74,10 +75,27 @@ class TelLivePostflightTest(TelephonyBaseTest):
                     message = "%s dialer crash: %s " % (ad.serial, tombstone)
                     ad.log.error(message)
                     msg += message
-                    crash_path = os.path.join(ad.log_path, self.test_id,
+                    crash_path = os.path.join(ad.log_path, self.test_name,
                                               "Crashes")
                     utils.create_dir(crash_path)
                     ad.pull_files([tombstone], crash_path)
+        if msg:
+            fail(msg)
+        return True
+
+    @test_tracker_info(uuid="707d4a33-2e21-40ea-bd27-d15f4e3ff0f0")
+    @TelephonyBaseTest.tel_test_wrap
+    def test_check_data_accounting_failures(self):
+        msg = ""
+        for ad in self.android_devices:
+            if any([
+                    ad.data_accounting[stat]
+                    for stat in
+                ("Total_Rx_Accounting_Failure",
+                 "Total_Mobile_Accounting_Failure",
+                 "Subscriber_Mobile_Data_Usage_Accounting_Failure")
+            ]):
+                msg += "%s %s" % (ad.serial, dict(ad.data_accounting))
         if msg:
             fail(msg)
         return True

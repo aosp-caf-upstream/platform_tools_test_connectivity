@@ -18,6 +18,7 @@
 
 bt_default_timeout = 15
 default_rfcomm_timeout_ms = 10000
+default_bluetooth_socket_timeout_ms = 10000
 pan_connect_timeout = 5
 bt_discovery_timeout = 3
 small_timeout = 0.0001
@@ -71,6 +72,9 @@ batch_scan_not_supported_list = [
 # rfcomm test uuids
 rfcomm_secure_uuid = "fa87c0d0-afac-11de-8a39-0800200c9a66"
 rfcomm_insecure_uuid = "8ce255c0-200a-11e0-ac64-0800200c9a66"
+
+# bluetooth socket connection test uuid
+bluetooth_socket_conn_test_uuid = "12345678-1234-5678-9abc-123456789abc"
 
 # Bluetooth Adapter Scan Mode Types
 bt_scan_mode_types = {
@@ -166,13 +170,12 @@ hid_connection_timeout = 5
 hid_on_set_report_event = "onSetReport"
 hid_on_get_report_event = "onGetReport"
 hid_on_set_protocol_event = "onSetProtocol"
-hid_on_intr_data_event = "onIntrData"
+hid_on_intr_data_event = "onInterruptData"
 hid_on_virtual_cable_unplug_event = "onVirtualCableUnplug"
 hid_id_keyboard = 1
 hid_id_mouse = 2
 hid_default_event_timeout = 15
 hid_default_set_report_payload = "Haha"
-
 
 ### Bluetooth Constants End ###
 
@@ -253,28 +256,40 @@ ble_advertise_error_code = {
 gatt_cb_err = {
     "char_write_req_err":
     "Characteristic Write Request event not found. Expected {}",
-    "char_write_err": "Characteristic Write event not found. Expected {}",
+    "char_write_err":
+    "Characteristic Write event not found. Expected {}",
     "desc_write_req_err":
     "Descriptor Write Request event not found. Expected {}",
-    "desc_write_err": "Descriptor Write event not found. Expected {}",
-    "char_read_err": "Characteristic Read event not found. Expected {}",
-    "char_read_req_err": "Characteristic Read Request not found. Expected {}",
-    "desc_read_err": "Descriptor Read event not found. Expected {}",
+    "desc_write_err":
+    "Descriptor Write event not found. Expected {}",
+    "char_read_err":
+    "Characteristic Read event not found. Expected {}",
+    "char_read_req_err":
+    "Characteristic Read Request not found. Expected {}",
+    "desc_read_err":
+    "Descriptor Read event not found. Expected {}",
     "desc_read_req_err":
     "Descriptor Read Request event not found. Expected {}",
-    "rd_remote_rssi_err": "Read Remote RSSI event not found. Expected {}",
+    "rd_remote_rssi_err":
+    "Read Remote RSSI event not found. Expected {}",
     "gatt_serv_disc_err":
     "GATT Services Discovered event not found. Expected {}",
-    "serv_added_err": "Service Added event not found. Expected {}",
-    "mtu_changed_err": "MTU Changed event not found. Expected {}",
-    "mtu_serv_changed_err": "MTU Server Changed event not found. Expected {}",
+    "serv_added_err":
+    "Service Added event not found. Expected {}",
+    "mtu_changed_err":
+    "MTU Changed event not found. Expected {}",
+    "mtu_serv_changed_err":
+    "MTU Server Changed event not found. Expected {}",
     "gatt_conn_changed_err":
     "GATT Connection Changed event not found. Expected {}",
     "char_change_err":
     "GATT Characteristic Changed event not fond. Expected {}",
-    "phy_read_err": "Phy Read event not fond. Expected {}",
-    "phy_update_err": "Phy Update event not fond. Expected {}",
-    "exec_write_err": "GATT Execute Write event not found. Expected {}"
+    "phy_read_err":
+    "Phy Read event not fond. Expected {}",
+    "phy_update_err":
+    "Phy Update event not fond. Expected {}",
+    "exec_write_err":
+    "GATT Execute Write event not found. Expected {}"
 }
 
 # GATT callback strings as defined in GattClientFacade.java and
@@ -526,3 +541,32 @@ gatt_server_responses = {
 }
 
 ### Bluetooth GATT Constants End ###
+
+### Chameleon Constants Begin ###
+
+# Chameleon audio bits per sample.
+audio_bits_per_sample_16 = 16
+audio_bits_per_sample_24 = 24
+audio_bits_per_sample_32 = 32
+
+# Chameleon audio sample rates.
+audio_sample_rate_44100 = 44100
+audio_sample_rate_48000 = 48000
+audio_sample_rate_88200 = 88200
+audio_sample_rate_96000 = 96000
+
+# Chameleon audio channel modes.
+audio_channel_mode_mono = 1
+audio_channel_mode_stereo = 2
+audio_channel_mode_8 = 8
+
+# Chameleon time delays.
+delay_after_binding_seconds = 0.5
+delay_before_record_seconds = 0.5
+silence_wait_seconds = 5
+
+# Chameleon bus endpoints.
+fpga_linein_bus_endpoint = 'Chameleon FPGA line-in'
+headphone_bus_endpoint = 'Cros device headphone'
+
+### Chameleon Constants End ###

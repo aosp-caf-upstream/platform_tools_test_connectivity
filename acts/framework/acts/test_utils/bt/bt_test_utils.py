@@ -57,6 +57,7 @@ from acts.test_utils.bt.bt_constants import bt_scan_mode_types
 from acts.test_utils.bt.bt_constants import btsnoop_last_log_path_on_device
 from acts.test_utils.bt.bt_constants import btsnoop_log_path_on_device
 from acts.test_utils.bt.bt_constants import default_rfcomm_timeout_ms
+from acts.test_utils.bt.bt_constants import default_bluetooth_socket_timeout_ms
 from acts.test_utils.bt.bt_constants import mtu_changed
 from acts.test_utils.bt.bt_constants import pairing_variant_passkey_confirmation
 from acts.test_utils.bt.bt_constants import pan_connect_timeout
@@ -104,8 +105,8 @@ def scan_and_verify_n_advertisements(scn_ad, max_advertisements):
             event = scn_ad.ed.pop_event(
                 scan_result.format(scan_callback), bt_default_timeout)
         except Empty as error:
-            raise BtTestUtilsError("Failed to find scan event: {}".format(
-                error))
+            raise BtTestUtilsError(
+                "Failed to find scan event: {}".format(error))
         address = event['data']['Result']['deviceInfo']['address']
         if address not in address_list:
             address_list.append(address)
@@ -142,8 +143,8 @@ def setup_n_advertisements(adv_ad, num_advertisements):
             adv_ad.log.info("Advertisement {} started.".format(i + 1))
         except Empty as error:
             adv_ad.log.error("Advertisement {} failed to start.".format(i + 1))
-            raise BtTestUtilsError("Test failed with Empty error: {}".format(
-                error))
+            raise BtTestUtilsError(
+                "Test failed with Empty error: {}".format(error))
     return advertise_callback_list
 
 
@@ -228,6 +229,9 @@ def setup_multiple_devices_for_bt_test(android_devices):
 
         for a in android_devices:
             d = a.droid
+            # TODO: Create specific RPC command to instantiate
+            # BluetoothConnectionFacade. This is just a workaround.
+            d.bluetoothStartConnectionStateChangeMonitor("")
             setup_result = d.bluetoothSetLocalName(generate_id_by_size(4))
             if not setup_result:
                 a.log.error("Failed to set device name.")
@@ -354,8 +358,8 @@ def determine_max_advertisements(android_device):
                                            small_timeout)
         if evt[0]["name"] == adv_succ.format(advertise_callback):
             advertisement_count += 1
-            android_device.log.info("Advertisement {} started.".format(
-                advertisement_count))
+            android_device.log.info(
+                "Advertisement {} started.".format(advertisement_count))
         else:
             error = evt[0]["data"]["Error"]
             if error == "ADVERTISE_FAILED_TOO_MANY_ADVERTISERS":
@@ -403,8 +407,9 @@ def get_advanced_droid_list(android_devices):
             max_tries = 3
             #Retry to calculate max advertisements
             while max_advertisements == -1 and max_tries > 0:
-                a.log.info("Attempts left to determine max advertisements: {}".
-                           format(max_tries))
+                a.log.info(
+                    "Attempts left to determine max advertisements: {}".format(
+                        max_tries))
                 max_advertisements = determine_max_advertisements(a)
                 max_tries -= 1
             advertisements_to_devices[model] = max_advertisements
@@ -506,8 +511,8 @@ def get_mac_address_of_generic_advertisement(scan_ad, adv_ad):
         event = scan_ad.ed.pop_event(
             "BleScan{}onScanResults".format(scan_callback), bt_default_timeout)
     except Empty as err:
-        raise BtTestUtilsError("Scanner did not find advertisement {}".format(
-            err))
+        raise BtTestUtilsError(
+            "Scanner did not find advertisement {}".format(err))
     mac_address = event['data']['Result']['deviceInfo']['address']
     scan_ad.droid.bleStopBleScan(scan_callback)
     return mac_address, advertise_callback
@@ -645,8 +650,7 @@ def set_profile_priority(host_ad, client_ad, profiles, priority):
     """Sets the priority of said profile(s) on host_ad for client_ad"""
     for profile in profiles:
         host_ad.log.info("Profile {} on {} for {} set to priority {}".format(
-            profile,
-            host_ad.droid.bluetoothGetLocalName(),
+            profile, host_ad.droid.bluetoothGetLocalName(),
             client_ad.droid.bluetoothGetLocalAddress(), priority.value))
         if bt_profile_constants['a2dp_sink'] == profile:
             host_ad.droid.bluetoothA2dpSinkSetPriority(
@@ -710,8 +714,8 @@ def _wait_for_passkey_match(pri_ad, sec_ad):
             timeout=bt_default_timeout)
         pri_variant = pri_pairing_req["data"]["PairingVariant"]
         pri_pin = pri_pairing_req["data"]["Pin"]
-        pri_ad.log.info("Primary device received Pin: {}, Variant: {}"
-                        .format(pri_pin, pri_variant))
+        pri_ad.log.info("Primary device received Pin: {}, Variant: {}".format(
+            pri_pin, pri_variant))
         sec_pairing_req = sec_ad.ed.pop_event(
             event_name="BluetoothActionPairingRequest",
             timeout=bt_default_timeout)
@@ -721,8 +725,8 @@ def _wait_for_passkey_match(pri_ad, sec_ad):
                         .format(sec_pin, sec_variant))
     except Empty as err:
         log.error("Wait for pin error: {}".format(err))
-        log.error("Pairing request state, Primary: {}, Secondary: {}"
-                  .format(pri_pairing_req, sec_pairing_req))
+        log.error("Pairing request state, Primary: {}, Secondary: {}".format(
+            pri_pairing_req, sec_pairing_req))
         return False
     if pri_variant == sec_variant == pairing_variant_passkey_confirmation:
         confirmation = pri_pin == sec_pin
@@ -840,34 +844,34 @@ def _connect_pri_to_sec(pri_ad, sec_ad, profiles_set):
 
     # Now try to connect them, the following call will try to initiate all
     # connections.
-    pri_ad.droid.bluetoothConnectBonded(sec_ad.droid.bluetoothGetLocalAddress(
-    ))
+    pri_ad.droid.bluetoothConnectBonded(
+        sec_ad.droid.bluetoothGetLocalAddress())
 
     end_time = time.time() + 10
     profile_connected = set()
     sec_addr = sec_ad.droid.bluetoothGetLocalAddress()
     pri_ad.log.info("Profiles to be connected {}".format(profiles_set))
     # First use APIs to check profile connection state
-    while (time.time() < end_time and
-           not profile_connected.issuperset(profiles_set)):
-        if (bt_profile_constants['headset_client'] not in profile_connected and
-                bt_profile_constants['headset_client'] in profiles_set):
+    while (time.time() < end_time
+           and not profile_connected.issuperset(profiles_set)):
+        if (bt_profile_constants['headset_client'] not in profile_connected
+                and bt_profile_constants['headset_client'] in profiles_set):
             if is_hfp_client_device_connected(pri_ad, sec_addr):
                 profile_connected.add(bt_profile_constants['headset_client'])
-        if (bt_profile_constants['a2dp'] not in profile_connected and
-                bt_profile_constants['a2dp'] in profiles_set):
+        if (bt_profile_constants['a2dp'] not in profile_connected
+                and bt_profile_constants['a2dp'] in profiles_set):
             if is_a2dp_src_device_connected(pri_ad, sec_addr):
                 profile_connected.add(bt_profile_constants['a2dp'])
-        if (bt_profile_constants['a2dp_sink'] not in profile_connected and
-                bt_profile_constants['a2dp_sink'] in profiles_set):
+        if (bt_profile_constants['a2dp_sink'] not in profile_connected
+                and bt_profile_constants['a2dp_sink'] in profiles_set):
             if is_a2dp_snk_device_connected(pri_ad, sec_addr):
                 profile_connected.add(bt_profile_constants['a2dp_sink'])
-        if (bt_profile_constants['map_mce'] not in profile_connected and
-                bt_profile_constants['map_mce'] in profiles_set):
+        if (bt_profile_constants['map_mce'] not in profile_connected
+                and bt_profile_constants['map_mce'] in profiles_set):
             if is_map_mce_device_connected(pri_ad, sec_addr):
                 profile_connected.add(bt_profile_constants['map_mce'])
-        if (bt_profile_constants['map'] not in profile_connected and
-                bt_profile_constants['map'] in profiles_set):
+        if (bt_profile_constants['map'] not in profile_connected
+                and bt_profile_constants['map'] in profiles_set):
             if is_map_mse_device_connected(pri_ad, sec_addr):
                 profile_connected.add(bt_profile_constants['map'])
         time.sleep(0.1)
@@ -890,8 +894,8 @@ def _connect_pri_to_sec(pri_ad, sec_ad, profiles_set):
         if state == bt_profile_states['connected'] and \
             device_addr == sec_ad.droid.bluetoothGetLocalAddress():
             profile_connected.add(profile)
-        pri_ad.log.info("Profiles connected until now {}".format(
-            profile_connected))
+        pri_ad.log.info(
+            "Profiles connected until now {}".format(profile_connected))
     # Failure happens inside the while loop. If we came here then we already
     # connected.
     return True
@@ -949,8 +953,8 @@ def disconnect_pri_from_sec(pri_ad, sec_ad, profiles_list):
         if state == bt_profile_states['disconnected'] and \
             device_addr == sec_ad.droid.bluetoothGetLocalAddress():
             profile_disconnected.add(profile)
-        pri_ad.log.info("Profiles disconnected so far {}".format(
-            profile_disconnected))
+        pri_ad.log.info(
+            "Profiles disconnected so far {}".format(profile_disconnected))
 
     return True
 
@@ -996,8 +1000,8 @@ def take_btsnoop_log(ad, testcase, testname):
              snoop_path + '/' + out_name, ".btsnoop_hci.log.last"))
         exe_cmd(cmd)
     except Exception as err:
-        testcase.log.info("File does not exist {}".format(
-            btsnoop_last_log_path_on_device))
+        testcase.log.info(
+            "File does not exist {}".format(btsnoop_last_log_path_on_device))
 
 
 def kill_bluetooth_process(ad):
@@ -1024,32 +1028,50 @@ def orchestrate_rfcomm_connection(client_ad,
     Returns:
         True if connection was successful, false if unsuccessful.
     """
+    result = orchestrate_bluetooth_socket_connection(
+        client_ad, server_ad, accept_timeout_ms,
+        (bt_rfcomm_uuids['default_uuid'] if uuid is None else uuid))
+
+    return result
+
+
+def orchestrate_bluetooth_socket_connection(
+        client_ad,
+        server_ad,
+        accept_timeout_ms=default_bluetooth_socket_timeout_ms,
+        uuid=None):
+    """Sets up the Bluetooth Socket connection between two Android devices.
+
+    Args:
+        client_ad: the Android device performing the connection.
+        server_ad: the Android device accepting the connection.
+    Returns:
+        True if connection was successful, false if unsuccessful.
+    """
     server_ad.droid.bluetoothStartPairingHelper()
     client_ad.droid.bluetoothStartPairingHelper()
-    if not uuid:
-        server_ad.droid.bluetoothRfcommBeginAcceptThread(
-            bt_rfcomm_uuids['default_uuid'], accept_timeout_ms)
-        client_ad.droid.bluetoothRfcommBeginConnectThread(
-            server_ad.droid.bluetoothGetLocalAddress(),
-            bt_rfcomm_uuids['default_uuid'])
-    else:
-        server_ad.droid.bluetoothRfcommBeginAcceptThread(uuid,
-                                                         accept_timeout_ms)
-        client_ad.droid.bluetoothRfcommBeginConnectThread(
-            server_ad.droid.bluetoothGetLocalAddress(), uuid)
+
+    server_ad.droid.bluetoothSocketConnBeginAcceptThreadUuid(
+        (bluetooth_socket_conn_test_uuid
+         if uuid is None else uuid), accept_timeout_ms)
+    client_ad.droid.bluetoothSocketConnBeginConnectThreadUuid(
+        server_ad.droid.bluetoothGetLocalAddress(),
+        (bluetooth_socket_conn_test_uuid if uuid is None else uuid))
+
     end_time = time.time() + bt_default_timeout
     result = False
     test_result = True
     while time.time() < end_time:
-        if len(client_ad.droid.bluetoothRfcommActiveConnections()) > 0:
+        if len(client_ad.droid.bluetoothSocketConnActiveConnections()) > 0:
             test_result = True
-            client_ad.log.info("RFCOMM Client Connection Active")
+            client_ad.log.info("Bluetooth socket Client Connection Active")
             break
         else:
             test_result = False
         time.sleep(1)
     if not test_result:
-        client_ad.log.error("Failed to establish an RFCOMM connection")
+        client_ad.log.error(
+            "Failed to establish a Bluetooth socket connection")
         return False
     return True
 
@@ -1069,19 +1091,19 @@ def write_read_verify_data(client_ad, server_ad, msg, binary=False):
     client_ad.log.info("Write message.")
     try:
         if binary:
-            client_ad.droid.bluetoothRfcommWriteBinary(msg)
+            client_ad.droid.bluetoothSocketConnWriteBinary(msg)
         else:
-            client_ad.droid.bluetoothRfcommWrite(msg)
+            client_ad.droid.bluetoothSocketConnWrite(msg)
     except Exception as err:
         client_ad.log.error("Failed to write data: {}".format(err))
         return False
     server_ad.log.info("Read message.")
     try:
         if binary:
-            read_msg = server_ad.droid.bluetoothRfcommReadBinary().rstrip(
+            read_msg = server_ad.droid.bluetoothSocketConnReadBinary().rstrip(
                 "\r\n")
         else:
-            read_msg = server_ad.droid.bluetoothRfcommRead()
+            read_msg = server_ad.droid.bluetoothSocketConnRead()
     except Exception as err:
         server_ad.log.error("Failed to read data: {}".format(err))
         return False
@@ -1125,13 +1147,13 @@ def verify_server_and_client_connected(client_ad, server_ad, log=True):
         false if unsuccessful.
     """
     test_result = True
-    if len(server_ad.droid.bluetoothRfcommActiveConnections()) == 0:
+    if len(server_ad.droid.bluetoothSocketConnActiveConnections()) == 0:
         if log:
-            server_ad.log.error("No rfcomm connections found on server.")
+            server_ad.log.error("No socket connections found on server.")
         test_result = False
-    if len(client_ad.droid.bluetoothRfcommActiveConnections()) == 0:
+    if len(client_ad.droid.bluetoothSocketConnActiveConnections()) == 0:
         if log:
-            client_ad.log.error("No rfcomm connections found on client.")
+            client_ad.log.error("No socket connections found on client.")
         test_result = False
     return test_result
 
@@ -1150,6 +1172,11 @@ def orchestrate_and_verify_pan_connection(pan_dut, panu_dut):
     if not toggle_airplane_mode_by_adb(log, panu_dut, True):
         panu_dut.log.error("Failed to toggle airplane mode on")
         return False
+    if not toggle_airplane_mode_by_adb(log, panu_dut, False):
+        pan_dut.log.error("Failed to toggle airplane mode off")
+        return False
+    pan_dut.droid.bluetoothStartConnectionStateChangeMonitor("")
+    panu_dut.droid.bluetoothStartConnectionStateChangeMonitor("")
     if not bluetooth_enabled_check(panu_dut):
         return False
     if not bluetooth_enabled_check(pan_dut):
@@ -1283,3 +1310,165 @@ def hid_device_send_key_data_report(host_id, device_ad, key, interval=1):
     time.sleep(interval)
     device_ad.droid.bluetoothHidDeviceSendReport(host_id, hid_id_keyboard,
                                                  hid_keyboard_report("00"))
+
+
+def do_multi_connection_throughput(client_ad, list_server_ad,
+                                   list_client_conn_id, num_iterations,
+                                   number_buffers, buffer_size):
+    """Throughput measurements from one client to one-or-many servers.
+
+    Args:
+        client_ad: the Android device to perform the write.
+        list_server_ad: the list of Android server devices connected to this client.
+        num_iterations: the number of test repetitions.
+        number_buffers: the total number of data buffers to transmit per test.
+        buffer_size: the number of bytes per L2CAP data buffer.
+        list_client_conn_id: list of client connection IDs
+
+    Returns:
+        Throughput in terms of bytes per second, 0 if test failed.
+    """
+
+    total_num_bytes = 0
+    start_write_time = time.perf_counter()
+    client_ad.log.info(
+        "do_multi_connection_throughput: Before write. Start Time={:f}, "
+        "num_iterations={}, number_buffers={}, buffer_size={}, "
+        "number_buffers*buffer_size={}, num_servers={}".format(
+            start_write_time, num_iterations, number_buffers, buffer_size,
+            number_buffers * buffer_size, len(list_server_ad)))
+
+    if (len(list_server_ad) != len(list_client_conn_id)):
+        client_ad.log.error("do_multi_connection_throughput: invalid "
+                            "parameters. Num of list_server_ad({}) != "
+                            "list_client_conn({})".format(
+                                len(list_server_ad), len(list_client_conn_id)))
+        return 0
+
+    try:
+        for index, client_conn_id in enumerate(list_client_conn_id):
+            client_ad.log.info("do_multi_connection_throughput: "
+                               "client_conn_id={}".format(client_conn_id))
+            # Plumb the tx data queue with the first set of data buffers.
+            client_ad.droid.bluetoothConnectionThroughputSend(
+                number_buffers, buffer_size, client_conn_id)
+    except Exception as err:
+        client_ad.log.error("Failed to write data: {}".format(err))
+        return 0
+
+    # Each Loop iteration will write and read one set of buffers.
+    for i in range(0, (num_iterations - 1)):
+        try:
+            for index, client_conn_id in enumerate(list_client_conn_id):
+                client_ad.droid.bluetoothConnectionThroughputSend(
+                    number_buffers, buffer_size, client_conn_id)
+        except Exception as err:
+            client_ad.log.error("Failed to write data: {}".format(err))
+            return 0
+
+        for index, server_ad in enumerate(list_server_ad):
+            try:
+                server_ad.droid.bluetoothConnectionThroughputRead(
+                    number_buffers, buffer_size)
+                total_num_bytes += number_buffers * buffer_size
+            except Exception as err:
+                server_ad.log.error("Failed to read data: {}".format(err))
+                return 0
+
+    for index, server_ad in enumerate(list_server_ad):
+        try:
+            server_ad.droid.bluetoothConnectionThroughputRead(
+                number_buffers, buffer_size)
+            total_num_bytes += number_buffers * buffer_size
+        except Exception as err:
+            server_ad.log.error("Failed to read data: {}".format(err))
+            return 0
+
+    end_read_time = time.perf_counter()
+
+    test_time = (end_read_time - start_write_time)
+    data_rate = (1.000 * total_num_bytes) / test_time
+    log.info(
+        "Calculated using total write and read times: total_num_bytes={}, "
+        "test_time={}, data rate={:08.0f} bytes/sec, {:08.0f} bits/sec".format(
+            total_num_bytes, test_time, data_rate, (data_rate * 8)))
+    return data_rate
+
+
+def orchestrate_coc_connection(
+        client_ad,
+        server_ad,
+        is_ble,
+        psm_value,
+        accept_timeout_ms=default_bluetooth_socket_timeout_ms):
+    """Sets up the CoC connection between two Android devices.
+
+    Args:
+        client_ad: the Android device performing the connection.
+        server_ad: the Android device accepting the connection.
+        is_ble: using LE transport.
+        psm_value: assigned PSM value of this CoC.
+        accept_timeout_ms: timeout while waiting for incoming connection.
+    Returns:
+        True if connection was successful or false if unsuccessful,
+        client connection ID,
+        and server connection ID
+    """
+    server_ad.droid.bluetoothStartPairingHelper()
+    client_ad.droid.bluetoothStartPairingHelper()
+
+    adv_callback = None
+    mac_address = None
+    if is_ble == 1:
+        try:
+            # This will start advertising and scanning. Will fail if it could
+            # not find the advertisements from server_ad
+            client_ad.log.info(
+                "orchestrate_coc_connection: Start BLE Advertisement and"
+                "Scanning")
+            mac_address, adv_callback = (
+                get_mac_address_of_generic_advertisement(client_ad, server_ad))
+        except BtTestUtilsError as err:
+            raise GattTestUtilsError(
+                "orchestrate_coc_connection: Error in getting mac address: {}".
+                format(err))
+    else:
+        mac_address = server_ad.droid.bluetoothGetLocalAddress()
+        adv_callback = None
+
+    server_ad.droid.bluetoothSocketConnBeginAcceptThreadPsm(
+        psm_value, accept_timeout_ms, is_ble)
+
+    client_ad.droid.bluetoothSocketConnBeginConnectThreadPsm(
+        mac_address, is_ble, psm_value)
+
+    end_time = time.time() + bt_default_timeout
+    test_result = False
+    while time.time() < end_time:
+        if len(server_ad.droid.bluetoothSocketConnActiveConnections()) > 0:
+            server_ad.log.info("CoC Server Connection Active")
+            if len(client_ad.droid.bluetoothSocketConnActiveConnections()) > 0:
+                client_ad.log.info("CoC Client Connection Active")
+                test_result = True
+                break
+        time.sleep(1)
+    if not test_result:
+        client_ad.log.error("Failed to establish an CoC connection")
+        return False, None
+
+    if len(client_ad.droid.bluetoothSocketConnActiveConnections()) > 0:
+        server_ad.log.info(
+            "CoC client_ad Connection Active, num=%d",
+            len(client_ad.droid.bluetoothSocketConnActiveConnections()))
+    else:
+        server_ad.log.info("Error CoC client_ad Connection Inactive")
+        client_ad.log.info("Error CoC client_ad Connection Inactive")
+
+    # Get the conn_id
+    client_conn_id = client_ad.droid.bluetoothGetLastConnId()
+    server_conn_id = server_ad.droid.bluetoothGetLastConnId()
+    client_ad.log.info(
+        "orchestrate_coc_connection: client conn id={}, server conn id={}".
+        format(client_conn_id, server_conn_id))
+
+    return True, client_conn_id, server_conn_id

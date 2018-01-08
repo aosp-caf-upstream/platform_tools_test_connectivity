@@ -39,6 +39,7 @@ from acts.test_utils.tel.tel_test_utils import abort_all_tests
 from acts.test_utils.tel.tel_test_utils import is_sim_locked
 from acts.test_utils.tel.tel_test_utils import ensure_phones_default_state
 from acts.test_utils.tel.tel_test_utils import ensure_phones_idle
+from acts.test_utils.tel.tel_test_utils import find_qxdm_logger_mask
 from acts.test_utils.tel.tel_test_utils import run_multithread_func
 from acts.test_utils.tel.tel_test_utils import print_radio_info
 from acts.test_utils.tel.tel_test_utils import refresh_droid_config
@@ -47,6 +48,7 @@ from acts.test_utils.tel.tel_test_utils import set_phone_screen_on
 from acts.test_utils.tel.tel_test_utils import set_phone_silent_mode
 from acts.test_utils.tel.tel_test_utils import set_qxdm_logger_command
 from acts.test_utils.tel.tel_test_utils import start_qxdm_loggers
+from acts.test_utils.tel.tel_test_utils import stop_qxdm_loggers
 from acts.test_utils.tel.tel_test_utils import unlock_sim
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_BACKGROUND
 from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_FOREGROUND
@@ -54,8 +56,6 @@ from acts.test_utils.tel.tel_defines import PRECISE_CALL_STATE_LISTEN_LEVEL_RING
 from acts.test_utils.tel.tel_defines import WIFI_VERBOSE_LOGGING_ENABLED
 from acts.test_utils.tel.tel_defines import WIFI_VERBOSE_LOGGING_DISABLED
 from acts.utils import force_airplane_mode
-
-QXDM_LOG_PATH = "/data/vendor/radio/diag_logs/logs"
 
 
 class TelephonyBaseTest(BaseTestClass):
@@ -67,27 +67,31 @@ class TelephonyBaseTest(BaseTestClass):
         qxdm_log_mask_cfg = self.user_params.get("qxdm_log_mask_cfg", None)
         if isinstance(qxdm_log_mask_cfg, list):
             qxdm_log_mask_cfg = qxdm_log_mask_cfg[0]
-            if "dev/null" in qxdm_log_mask_cfg:
-                qxdm_log_mask_cfg = None
+        if qxdm_log_mask_cfg and "dev/null" in qxdm_log_mask_cfg:
+            qxdm_log_mask_cfg = None
+        stop_qxdm_loggers(self.log, self.android_devices)
         for ad in self.android_devices:
             ad.qxdm_log = getattr(ad, "qxdm_log", True)
             qxdm_log_mask = getattr(ad, "qxdm_log_mask", None)
             if ad.qxdm_log:
                 if qxdm_log_mask_cfg:
-                    qxdm_log_path = getattr(ad, "qxdm_log_path", QXDM_LOG_PATH)
-                    qxdm_cfg_path = os.path.join(
-                        os.path.split(qxdm_log_path)[0], "cfg")
-                    ad.adb.shell("mkdir -p %s" % qxdm_cfg_path)
+                    qxdm_mask_path = find_qxdm_logger_mask(ad, "default.cfg")
+                    qxdm_mask_path = os.path.split(qxdm_mask_path)[0]
                     ad.log.info("Push %s to %s", qxdm_log_mask_cfg,
-                                qxdm_cfg_path)
-                    ad.adb.push("%s %s" % (qxdm_log_mask_cfg, qxdm_cfg_path))
+                                qxdm_mask_path)
+                    ad.adb.push("%s %s" % (qxdm_log_mask_cfg, qxdm_mask_path))
                     mask_file_name = os.path.split(qxdm_log_mask_cfg)[-1]
-                    qxdm_log_mask = os.path.join(qxdm_cfg_path, mask_file_name)
+                    qxdm_log_mask = os.path.join(qxdm_mask_path,
+                                                 mask_file_name)
                 set_qxdm_logger_command(ad, mask=qxdm_log_mask)
+                ad.adb.shell("rm %s" % os.path.join(ad.qxdm_logger_path, "*"))
             print_radio_info(ad)
             if not unlock_sim(ad):
                 abort_all_tests(ad.log, "unable to unlock SIM")
 
+        if getattr(self, "qxdm_log", True):
+            start_qxdm_loggers(self.log, self.android_devices,
+                               utils.get_current_epoch_time())
         self.skip_reset_between_cases = self.user_params.get(
             "skip_reset_between_cases", True)
 
@@ -97,7 +101,7 @@ class TelephonyBaseTest(BaseTestClass):
     def tel_test_wrap(fn):
         def _safe_wrap_test_case(self, *args, **kwargs):
             test_id = "%s:%s:%s" % (self.__class__.__name__, self.test_name,
-                                    self.begin_time.replace(' ', '-'))
+                                    self.log_begin_time.replace(' ', '-'))
             self.test_id = test_id
             log_string = "[Test ID] %s" % test_id
             self.log.info(log_string)
@@ -256,6 +260,7 @@ class TelephonyBaseTest(BaseTestClass):
         return True
 
     def teardown_class(self):
+        stop_qxdm_loggers(self.log, self.android_devices)
         try:
             for ad in self.android_devices:
                 ad.droid.disableDevicePassword()
@@ -268,7 +273,7 @@ class TelephonyBaseTest(BaseTestClass):
 
     def setup_test(self):
         if getattr(self, "qxdm_log", True):
-            start_qxdm_loggers(self.log, self.android_devices)
+            start_qxdm_loggers(self.log, self.android_devices, self.begin_time)
         if getattr(self, "diag_logger", None):
             for logger in self.diag_logger:
                 self.log.info("Starting a diagnostic session %s", logger)

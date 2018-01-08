@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import math
 import os
 import time
 import traceback
@@ -229,7 +230,7 @@ class BaseTestClass(object):
         if record.details:
             self.log.error(record.details)
         self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
-        self.on_fail(record.test_name, record.log_begin_time)
+        self.on_fail(record.test_name, record.begin_time)
 
     def on_fail(self, test_name, begin_time):
         """A function that is executed upon a test case failure.
@@ -253,7 +254,7 @@ class BaseTestClass(object):
         if msg:
             self.log.info(msg)
         self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
-        self.on_pass(record.test_name, record.log_begin_time)
+        self.on_pass(record.test_name, record.begin_time)
 
     def on_pass(self, test_name, begin_time):
         """A function that is executed upon a test case passing.
@@ -275,7 +276,7 @@ class BaseTestClass(object):
         """
         self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
         self.log.info("Reason to skip: %s", record.details)
-        self.on_skip(record.test_name, record.log_begin_time)
+        self.on_skip(record.test_name, record.begin_time)
 
     def on_skip(self, test_name, begin_time):
         """A function that is executed upon a test case being skipped.
@@ -297,7 +298,7 @@ class BaseTestClass(object):
         """
         self.log.info(RESULT_LINE_TEMPLATE, record.test_name, record.result)
         self.log.info("Reason to block: %s", record.details)
-        self.on_blocked(record.test_name, record.log_begin_time)
+        self.on_blocked(record.test_name, record.begin_time)
 
     def on_blocked(self, test_name, begin_time):
         """A function that is executed upon a test begin skipped.
@@ -316,7 +317,7 @@ class BaseTestClass(object):
                     case.
         """
         self.log.exception(record.details)
-        self.on_exception(record.test_name, record.log_begin_time)
+        self.on_exception(record.test_name, record.begin_time)
 
     def on_exception(self, test_name, begin_time):
         """A function that is executed upon an unhandled exception from a test
@@ -368,7 +369,8 @@ class BaseTestClass(object):
         is_generate_trigger = False
         tr_record = records.TestResultRecord(test_name, self.TAG)
         tr_record.test_begin()
-        self.begin_time = tr_record.log_begin_time
+        self.begin_time = int(tr_record.begin_time)
+        self.log_begin_time = tr_record.log_begin_time
         self.test_name = tr_record.test_name
         self.log.info("%s %s", TEST_CASE_TOKEN, test_name)
         verdict = None
@@ -679,17 +681,38 @@ class BaseTestClass(object):
         user.
         """
 
-    def _ad_take_reports(self, ad, test_name, begin_time):
-        try:
-            if getattr(ad, "qxdm_log", False):
+    def _ad_take_bugreport(self, ad, test_name, begin_time):
+        for i in range(3):
+            try:
+                bugreport_path = os.path.join(ad.log_path, test_name)
+                utils.create_dir(bugreport_path)
+                ad.take_bug_report(test_name, begin_time)
+                return True
+            except Exception as e:
+                ad.log.error("bugreport attempt %s error: %s", i + 1, e)
+
+    def _ad_take_extra_logs(self, ad, test_name, begin_time):
+        result = True
+        if getattr(ad, "qxdm_log", False):
+            # Gather qxdm log modified 3 minutes earlier than test start time
+            if begin_time:
+                epoch_time = begin_time - 1000 * 60 * 3
+            else:
+                epoch_time = None
+            try:
                 ad.get_qxdm_logs(test_name, begin_time)
-            ad.take_bug_report(test_name, begin_time)
-            bugreport_path = os.path.join(ad.log_path, test_name)
-            utils.create_dir(bugreport_path)
-            ad.check_crash_report(test_name, begin_time, True)
+            except Exception as e:
+                ad.log.error("Failed to get QXDM log for %s with error %s",
+                             test_name, e)
+                result = False
+
+        try:
+            ad.check_crash_report(test_name, begin_time, log_crash_report=True)
         except Exception as e:
-            ad.log.error("Failed to take a bug report for %s with error %s",
+            ad.log.error("Failed to check crash report for %s with error %s",
                          test_name, e)
+            result = False
+        return result
 
     def _skip_bug_report(self):
         """A function to check whether we should skip creating a bug report."""
@@ -720,8 +743,10 @@ class BaseTestClass(object):
         if self._skip_bug_report():
             return
 
-        tasks = [(self._ad_take_reports, (ad, test_name, begin_time))
+        tasks = [(self._ad_take_bugreport, (ad, test_name, begin_time))
                  for ad in self.android_devices]
+        tasks.extend([(self._ad_take_extra_logs, (ad, test_name, begin_time))
+                      for ad in self.android_devices])
         run_multithread_func(self.log, tasks)
 
     def _reboot_device(self, ad):
@@ -729,16 +754,17 @@ class BaseTestClass(object):
         ad = ad.reboot()
 
     def _cleanup_logger_sessions(self):
-        for (logger, session) in self.logger_sessions:
-            self.log.info("Resetting a diagnostic session %s, %s", logger,
+        for (mylogger, session) in self.logger_sessions:
+            self.log.info("Resetting a diagnostic session %s, %s", mylogger,
                           session)
-            logger.reset()
+            mylogger.reset()
         self.logger_sessions = []
 
     def _pull_diag_logs(self, test_name, begin_time):
-        for (logger, session) in self.logger_sessions:
-            self.log.info("Pulling diagnostic session %s", logger)
-            logger.stop(session)
-            diag_path = os.path.join(self.log_path, begin_time)
+        for (mylogger, session) in self.logger_sessions:
+            self.log.info("Pulling diagnostic session %s", mylogger)
+            mylogger.stop(session)
+            diag_path = os.path.join(
+                self.log_path, logger.epoch_to_log_line_timestamp(begin_time))
             utils.create_dir(diag_path)
-            logger.pull(session, diag_path)
+            mylogger.pull(session, diag_path)

@@ -50,6 +50,24 @@ def wait_for_event(ad, event_name, timeout=EVENT_TIMEOUT):
     ad.log.info('%sTimed out while waiting for %s', prefix, event_name)
     asserts.fail(event_name)
 
+def fail_on_event(ad, event_name, timeout=EVENT_TIMEOUT):
+  """Wait for a timeout period and looks for the specified event - fails if it
+  is observed.
+
+  Args:
+    ad: The android device
+    event_name: The event to wait for (and fail on its appearance)
+  """
+  prefix = ''
+  if hasattr(ad, 'pretty_name'):
+    prefix = '[%s] ' % ad.pretty_name
+  try:
+    event = ad.ed.pop_event(event_name, timeout)
+    ad.log.info('%sReceived unwanted %s: %s', prefix, event_name, event['data'])
+    asserts.fail(event_name, extras=event)
+  except queue.Empty:
+    ad.log.info('%s%s not seen (as expected)', prefix, event_name)
+    return
 
 def get_rtt_supporting_networks(scanned_networks):
   """Filter the input list and only return those networks which support
@@ -143,16 +161,21 @@ def validate_ap_results(scan_results, range_results):
 
 
 def validate_aware_mac_result(range_result, mac, description):
-  """Validate the range result for An Aware peer specified with a MAC address:
-  - Correct MAC address
+  """Validate the range result for an Aware peer specified with a MAC address:
+  - Correct MAC address.
+
+  The MAC addresses may contain ":" (which are ignored for the comparison) and
+  may be in any case (which is ignored for the comparison).
 
   Args:
     range_result: Range result returned by the RTT API
     mac: MAC address of the peer
     description: Additional content to print on failure
   """
-  asserts.assert_equal(mac,
-                       range_result[rconsts.EVENT_CB_RANGING_KEY_MAC_AS_STRING],
+  mac1 = mac.replace(':', '').lower()
+  mac2 = range_result[rconsts.EVENT_CB_RANGING_KEY_MAC_AS_STRING].replace(':',
+                                                                  '').lower()
+  asserts.assert_equal(mac1, mac2,
                        '%s: MAC mismatch' % description)
 
 def validate_aware_peer_id_result(range_result, peer_id, description):

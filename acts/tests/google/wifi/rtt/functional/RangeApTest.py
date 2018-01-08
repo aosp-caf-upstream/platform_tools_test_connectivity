@@ -18,16 +18,16 @@ import queue
 import time
 
 from acts import asserts
+from acts.test_utils.wifi.aware import aware_const as aconsts
+from acts.test_utils.wifi.aware import aware_test_utils as autils
+from acts.test_utils.wifi.aware.AwareBaseTest import AwareBaseTest
 from acts.test_utils.wifi.rtt import rtt_const as rconsts
 from acts.test_utils.wifi.rtt import rtt_test_utils as rutils
 from acts.test_utils.wifi.rtt.RttBaseTest import RttBaseTest
 
 
-class RangeApTest(RttBaseTest):
+class RangeApTest(AwareBaseTest, RttBaseTest):
   """Test class for RTT ranging to Access Points"""
-
-  # max number of APs to range concurrently
-  MAX_APS = 10
 
   # Number of RTT iterations
   NUM_ITER = 10
@@ -42,7 +42,20 @@ class RangeApTest(RttBaseTest):
   TIME_BETWEEN_ITERATIONS = 0
 
   def __init__(self, controllers):
+    AwareBaseTest.__init__(self, controllers)
     RttBaseTest.__init__(self, controllers)
+
+  def setup_test(self):
+    """Manual setup here due to multiple inheritance: explicitly execute the
+    setup method from both parents."""
+    AwareBaseTest.setup_test(self)
+    RttBaseTest.setup_test(self)
+
+  def teardown_test(self):
+    """Manual teardown here due to multiple inheritance: explicitly execute the
+    teardown method from both parents."""
+    AwareBaseTest.teardown_test(self)
+    RttBaseTest.teardown_test(self)
 
   def run_ranging(self, dut, aps, iter_count, time_between_iterations):
     """Executing ranging to the set of APs.
@@ -73,7 +86,7 @@ class RangeApTest(RttBaseTest):
             len(range_results),
             'Mismatch in length of scan results and range results')
         for result in range_results:
-          bssid = result[rconsts.EVENT_CB_RANGING_KEY_MAC_AS_STRING_BSSID]
+          bssid = result[rconsts.EVENT_CB_RANGING_KEY_MAC_AS_STRING]
           asserts.assert_true(bssid in events,
                               "Result BSSID %s not in requested AP!?" % bssid)
           asserts.assert_equal(len(events[bssid]), i,
@@ -84,6 +97,38 @@ class RangeApTest(RttBaseTest):
           events[ap["BSSID"]].append(None)
 
     return events
+
+  def run_rtt_supporting_ap_only(self, with_responder):
+    """Scan for APs and perform RTT only to those which support 802.11mc
+
+    Args:
+      with_responder: True to run a Responder on the device.
+    """
+    dut = self.android_devices[0]
+    max_peers = dut.droid.wifiRttMaxPeersInRequest()
+    rtt_supporting_aps = rutils.scan_for_rtt_supporting_networks(dut, repeat=10)
+    dut.log.info("RTT Supporting APs=%s", rtt_supporting_aps)
+
+    asserts.assert_true(
+        len(rtt_supporting_aps) > 0,
+        "Need at least one AP which supports 802.11mc!")
+    if len(rtt_supporting_aps) > max_peers:
+      rtt_supporting_aps = rtt_supporting_aps[0:max_peers]
+
+    if with_responder:
+      id = dut.droid.wifiAwareAttach(False)
+      autils.wait_for_event(dut, aconsts.EVENT_CB_ON_ATTACHED)
+      p_config = autils.add_ranging_to_pub(
+          autils.create_discovery_config("GoogleResponderXYZXYZ",
+                                         aconsts.PUBLISH_TYPE_UNSOLICITED),
+          enable_ranging=True)
+      dut.droid.wifiAwarePublish(id, p_config)
+      autils.wait_for_event(dut, aconsts.SESSION_CB_ON_PUBLISH_STARTED)
+
+    events = self.run_ranging(dut, aps=rtt_supporting_aps,
+                              iter_count=self.NUM_ITER,
+                              time_between_iterations=self.TIME_BETWEEN_ITERATIONS)
+    self.verify_results(events)
 
   def verify_results(self, all_aps_events):
     """Verifies the results of the RTT experiment.
@@ -103,27 +148,20 @@ class RangeApTest(RttBaseTest):
 
   def test_rtt_supporting_ap_only(self):
     """Scan for APs and perform RTT only to those which support 802.11mc"""
-    dut = self.android_devices[0]
-    rtt_supporting_aps = rutils.scan_for_rtt_supporting_networks(dut, repeat=10)
-    dut.log.info("RTT Supporting APs=%s", rtt_supporting_aps)
+    self.run_rtt_supporting_ap_only(with_responder=False)
 
-    asserts.assert_true(
-        len(rtt_supporting_aps) > 0,
-        "Need at least one AP which supports 802.11mc!")
-    if len(rtt_supporting_aps) > self.MAX_APS:
-      rtt_supporting_aps = rtt_supporting_aps[0:self.MAX_APS]
-
-    events = self.run_ranging(dut, aps=rtt_supporting_aps,
-        iter_count=self.NUM_ITER,
-        time_between_iterations=self.TIME_BETWEEN_ITERATIONS)
-    self.verify_results(events)
+  def test_rtt_supporting_ap_only_with_responder(self):
+    """Scan for APs and perform RTT only to those which support 802.11mc.
+    Enable a Responder on the device."""
+    self.run_rtt_supporting_ap_only(with_responder=True)
 
   def test_rtt_all_aps(self):
     """Scan for APs and perform RTT on the first 10 visible APs"""
     dut = self.android_devices[0]
+    max_peers = dut.droid.wifiRttMaxPeersInRequest()
     all_aps = rutils.scan_networks(dut)
-    if len(all_aps) > self.MAX_APS:
-      all_aps = all_aps[0:self.MAX_APS]
+    if len(all_aps) > max_peers:
+      all_aps = all_aps[0:max_peers]
     dut.log.info("Visible APs=%s", all_aps)
 
     events = self.run_ranging(dut, aps=all_aps,
