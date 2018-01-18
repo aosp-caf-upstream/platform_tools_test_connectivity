@@ -1708,8 +1708,10 @@ def call_setup_teardown_for_subscription(
     if not verify_callee_func:
         verify_callee_func = is_phone_in_call
     result = True
-    ad_caller.log.info("Call from %s to %s with duration %s", caller_number,
-                       callee_number, wait_time_in_call)
+    msg = "Call from %s to %s" % (caller_number, callee_number)
+    if ad_hangup:
+        msg = "%s for duration of %s seconds" % (msg, wait_time_in_call)
+    ad_caller.log.info(msg)
 
     try:
         if not initiate_call(
@@ -2825,7 +2827,11 @@ def is_phone_in_call(log, ad):
         log: log object.
         ad:  android device.
     """
-    return ad.droid.telecomIsInCall()
+    try:
+        return ad.droid.telecomIsInCall()
+    except:
+        return "mCallState=2" in ad.adb.shell(
+            "dumpsys telephony.registry | grep mCallState")
 
 
 def is_phone_not_in_call(log, ad):
@@ -3496,7 +3502,8 @@ def sms_mms_send_logcat_check(ad, type, begin_time):
 def sms_mms_receive_logcat_check(ad, type, begin_time):
     type = type.upper()
     log_results = ad.search_logcat(
-        "New %s Received" % type, begin_time=begin_time)
+        "New %s Received" % type, begin_time=begin_time) or \
+        ad.search_logcat("New %s Downloaded" % type, begin_time=begin_time)
     if log_results:
         ad.log.info("Found SL4A %s received log message" % type)
         return True

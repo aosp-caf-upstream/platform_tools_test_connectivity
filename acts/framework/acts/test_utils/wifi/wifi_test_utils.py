@@ -50,6 +50,7 @@ class WifiEnums():
     PWD_KEY = "password"
     frequency_key = "frequency"
     APBAND_KEY = "apBand"
+    HIDDEN_KEY = "hiddenSSID"
 
     WIFI_CONFIG_APBAND_2G = 0
     WIFI_CONFIG_APBAND_5G = 1
@@ -711,7 +712,7 @@ def start_wifi_background_scan(ad, scan_setting):
     return event['data']
 
 
-def start_wifi_tethering(ad, ssid, password, band=None):
+def start_wifi_tethering(ad, ssid, password, band=None, hidden=None):
     """Starts wifi tethering on an android_device.
 
     Args:
@@ -720,6 +721,7 @@ def start_wifi_tethering(ad, ssid, password, band=None):
         password: The password the soft AP should use.
         band: The band the soft AP should be set on. It should be either
             WifiEnums.WIFI_CONFIG_APBAND_2G or WifiEnums.WIFI_CONFIG_APBAND_5G.
+        hidden: boolean to indicate if the AP needs to be hidden or not.
 
     Returns:
         No return value. Error checks in this function will raise test failure signals
@@ -729,6 +731,8 @@ def start_wifi_tethering(ad, ssid, password, band=None):
         config[WifiEnums.PWD_KEY] = password
     if band:
         config[WifiEnums.APBAND_KEY] = band
+    if hidden:
+      config[WifiEnums.HIDDEN_KEY] = hidden
     asserts.assert_true(
         ad.droid.wifiSetWifiApConfiguration(config),
         "Failed to update WifiAp Configuration")
@@ -927,6 +931,49 @@ def wait_for_disconnect(ad):
         ad.droid.wifiStopTrackingStateChange()
     except queue.Empty:
         raise signals.TestFailure("Device did not disconnect from the network")
+
+
+def connect_to_wifi_network(ad, network):
+    """Connection logic for open and psk wifi networks.
+
+    Args:
+        params: A tuple of network info and AndroidDevice object.
+    """
+    droid = ad.droid
+    ed = ad.ed
+    SSID = network[WifiEnums.SSID_KEY]
+    ed.clear_all_events()
+    start_wifi_connection_scan(ad)
+    scan_results = droid.wifiGetScanResults()
+    assert_network_in_list({WifiEnums.SSID_KEY: SSID}, scan_results)
+    wifi_connect(ad, network, num_of_tries=3)
+
+
+def connect_to_wifi_network_with_id(ad, network_id, network_ssid):
+    """Connect to the given network using network id and verify SSID.
+
+    Args:
+        network_id: int Network Id of the network.
+        network_ssid: string SSID of the network.
+
+    Returns: True if connect using network id was successful;
+             False otherwise.
+
+    """
+    ad.ed.clear_all_events()
+    start_wifi_connection_scan(ad)
+    scan_results = ad.droid.wifiGetScanResults()
+    assert_network_in_list({
+        WifiEnums.SSID_KEY: network_ssid
+    }, scan_results)
+    wifi_connect_by_id(ad, network_id)
+    connect_data = ad.droid.wifiGetConnectionInfo()
+    connect_ssid = connect_data[WifiEnums.SSID_KEY]
+    ad.log.debug("Expected SSID = %s Connected SSID = %s" %
+                   (network_ssid, connect_ssid))
+    if connect_ssid != network_ssid:
+        return False
+    return True
 
 
 def wifi_connect(ad, network, num_of_tries=1, assert_on_fail=True):

@@ -180,9 +180,15 @@ class BaseTestClass(object):
         self.current_test_name = test_name
         try:
             # Write test start token to adb log if android device is attached.
-            for ad in self.android_devices:
-                ad.droid.logV("%s BEGIN %s" % (TEST_CASE_TOKEN, test_name))
-        except:
+            if hasattr(self, 'android_devices'):
+                for ad in self.android_devices:
+                    if not ad.skip_sl4a:
+                        ad.droid.logV("%s BEGIN %s" % (TEST_CASE_TOKEN,
+                                                       test_name))
+        except Exception as e:
+            self.log.warning(
+                'Unable to send BEGIN log command to all devices.')
+            self.log.warning('Error: %s' % e)
             pass
         return self.setup_test()
 
@@ -196,6 +202,7 @@ class BaseTestClass(object):
 
         Implementation is optional.
         """
+        return True
 
     def _teardown_test(self, test_name):
         """Proxy function to guarantee the base implementation of teardown_test
@@ -696,11 +703,11 @@ class BaseTestClass(object):
         if getattr(ad, "qxdm_log", False):
             # Gather qxdm log modified 3 minutes earlier than test start time
             if begin_time:
-                epoch_time = begin_time - 1000 * 60 * 3
+                qxdm_begin_time = begin_time - 1000 * 60 * 3
             else:
-                epoch_time = None
+                qxdm_begin_time = None
             try:
-                ad.get_qxdm_logs(test_name, begin_time)
+                ad.get_qxdm_logs(test_name, qxdm_begin_time)
             except Exception as e:
                 ad.log.error("Failed to get QXDM log for %s with error %s",
                              test_name, e)
