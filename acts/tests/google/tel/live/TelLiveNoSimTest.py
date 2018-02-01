@@ -17,21 +17,13 @@
     Test Script for Telephony Pre Check In Sanity
 """
 
-import time
-import os
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
 from acts.test_utils.tel.tel_defines import DEFAULT_DEVICE_PASSWORD
 from acts.test_utils.tel.tel_defines import SIM_STATE_ABSENT
-from acts.test_utils.tel.tel_test_utils import dumpsys_telecom_call_info
 from acts.test_utils.tel.tel_test_utils import fastboot_wipe
-from acts.test_utils.tel.tel_test_utils import hung_up_call_by_adb
-from acts.test_utils.tel.tel_test_utils import initiate_call
-from acts.test_utils.tel.tel_test_utils import initiate_emergency_dialer_call_by_adb
 from acts.test_utils.tel.tel_test_utils import reset_device_password
 from acts.test_utils.tel.tel_test_utils import toggle_airplane_mode_by_adb
-from acts.test_utils.tel.tel_test_utils import unlocking_device
-from acts.test_utils.tel.tel_test_utils import STORY_LINE
 from TelLiveEmergencyTest import TelLiveEmergencyTest
 
 
@@ -47,6 +39,7 @@ class TelLiveNoSimTest(TelLiveEmergencyTest):
 
     def setup_test(self):
         self.expected_call_result = False
+        self.android_devices = [self.dut]
 
     """ Tests Begin """
 
