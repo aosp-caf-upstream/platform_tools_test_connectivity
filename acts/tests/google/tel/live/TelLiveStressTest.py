@@ -23,10 +23,11 @@ import os
 import random
 import time
 
+from acts import utils
 from acts.asserts import fail
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.tel.TelephonyBaseTest import TelephonyBaseTest
-from acts.test_utils.tel.tel_defines import WFC_MODE_WIFI_PREFERRED
+from acts.test_utils.tel.tel_defines import MAX_WAIT_TIME_SMS_RECEIVE
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_WCDMA_ONLY
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_GLOBAL
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_CDMA
@@ -34,6 +35,7 @@ from acts.test_utils.tel.tel_defines import NETWORK_MODE_GSM_ONLY
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_TDSCDMA_GSM_WCDMA
 from acts.test_utils.tel.tel_defines import NETWORK_MODE_LTE_CDMA_EVDO_GSM_WCDMA
 from acts.test_utils.tel.tel_defines import WAIT_TIME_AFTER_MODE_CHANGE
+from acts.test_utils.tel.tel_defines import WFC_MODE_WIFI_PREFERRED
 from acts.test_utils.tel.tel_test_utils import active_file_download_test
 from acts.test_utils.tel.tel_test_utils import is_phone_in_call
 from acts.test_utils.tel.tel_test_utils import call_setup_teardown
@@ -169,7 +171,7 @@ class TelLiveStressTest(TelephonyBaseTest):
             ad.log.info("RAT 2G is enabled successfully.")
         return True
 
-    def _send_message(self):
+    def _send_message(self, max_wait_time=2*MAX_WAIT_TIME_SMS_RECEIVE):
         if self.single_phone_test:
             ads = [self.dut, self.dut]
         else:
@@ -186,7 +188,7 @@ class TelLiveStressTest(TelephonyBaseTest):
             1: mms_send_receive_verify
         }
         message_type = message_type_map[selection]
-        the_number = self.result_info["Total %s" % message_type] + 1
+        the_number = self.result_info["%s Total" % message_type] + 1
         begin_time = get_current_epoch_time()
         start_qxdm_loggers(self.log, self.android_devices)
         log_msg = "The %s-th %s test: of length %s from %s to %s" % (
@@ -218,11 +220,12 @@ class TelLiveStressTest(TelephonyBaseTest):
                 break
 
         if not message_func_map[selection](self.log, ads[0], ads[1],
-                                           message_content_map[selection]):
-            self.result_info["Total %s" % message_type] += 1
+                                           message_content_map[selection],
+                                           max_wait_time):
+            self.result_info["%s Total" % message_type] += 1
             if message_type == "SMS":
                 self.log.error("%s fails", log_msg)
-                self.result_info["%s failure" % message_type] += 1
+                self.result_info["%s Failure" % message_type] += 1
                 self._take_bug_report("%s_%s_No_%s_failure" %
                                       (self.test_name, message_type,
                                        the_number), begin_time)
@@ -241,7 +244,7 @@ class TelLiveStressTest(TelephonyBaseTest):
                                                the_number), begin_time)
             return False
         else:
-            self.result_info["Total %s" % message_type] += 1
+            self.result_info["%s Total" % message_type] += 1
             self.log.info("%s succeed", log_msg)
             self.result_info["%s Success" % message_type] += 1
             return True
@@ -252,9 +255,10 @@ class TelLiveStressTest(TelephonyBaseTest):
             random.shuffle(ads)
         for ad in ads:
             hangup_call_by_adb(ad)
-        the_number = self.result_info["Total Calls"] + 1
+        the_number = self.result_info["Call Total"] + 1
         duration = random.randrange(self.min_phone_call_duration,
                                     self.max_phone_call_duration)
+        result = True
         if self.single_phone_test:
             log_msg = "The %s-th phone call test for %ssec duration" % (
                 the_number, duration)
@@ -263,16 +267,7 @@ class TelLiveStressTest(TelephonyBaseTest):
                 the_number, ads[0].serial, ads[1].serial, duration)
         self.log.info(log_msg)
         for ad in ads:
-            for i in range(3):
-                try:
-                    ad.droid.logI(log_msg)
-                    break
-                except Exception as e:
-                    if i == 2:
-                        ad.log.info("SL4A error: %s", e)
-                        raise
-                    else:
-                        time.sleep(5)
+            ad.droid.logI(log_msg)
         begin_time = get_current_epoch_time()
         start_qxdm_loggers(self.log, self.android_devices, begin_time)
         if self.single_phone_test:
@@ -285,42 +280,60 @@ class TelLiveStressTest(TelephonyBaseTest):
         if not call_setup_result:
             self.log.error("%s: Setup Call failed.", log_msg)
             self.result_info["Call Setup Failure"] += 1
-            self._take_bug_report("%s_call_No_%s_setup_failure" %
-                                  (self.test_name, the_number), begin_time)
-            return False
-        elapsed_time = 0
-        check_interval = 5
-        while (elapsed_time < duration):
-            check_interval = min(check_interval, duration - elapsed_time)
-            time.sleep(check_interval)
-            elapsed_time += check_interval
-            time_message = "at <%s>/<%s> second." % (elapsed_time, duration)
-            for ad in ads:
-                if not call_verification_func(self.log, ad):
-                    ad.log.error("Call is NOT in correct %s state at %s",
-                                 call_verification_func.__name__, time_message)
-                    self.result_info["Call Maintenance Failure"] += 1
-                    self._take_bug_report("%s_call_No_%s_maintenance_failure" %
-                                          (self.test_name,
-                                           the_number), begin_time)
-                    hangup_call(self.log, ads[0])
-                    return False
-                else:
-                    ad.log.info("Call is in correct %s state at %s",
-                                call_verification_func.__name__, time_message)
+            failure_reason = "setup"
+            result = False
+        else:
+            elapsed_time = 0
+            check_interval = 5
+            while (elapsed_time < duration):
+                check_interval = min(check_interval, duration - elapsed_time)
+                time.sleep(check_interval)
+                elapsed_time += check_interval
+                time_message = "at <%s>/<%s> second." % (elapsed_time, duration)
+                for ad in ads:
+                    if not call_verification_func(self.log, ad):
+                        ad.log.error(
+                            "Call is NOT in correct %s state at %s",
+                            call_verification_func.__name__, time_message)
+                        self.result_info["Call Maintenance Failure"] += 1
+                        failure_reason = "maintenance"
+                        reasons = ad.search_logcat(
+                            "qcril_qmi_voice_map_qmi_to_ril_last_call_failure_cause",
+                            begin_time)
+                        if reasons:
+                            ad.log.info(reasons[-1]["log_message"])
+                        hangup_call(self.log, ads[0])
+                        result =  False
+                    else:
+                        ad.log.info(
+                            "Call is in correct %s state at %s",
+                            call_verification_func.__name__, time_message)
+                if not result:
+                    break
         if not hangup_call(self.log, ads[0]):
             time.sleep(10)
             for ad in ads:
                 if ad.droid.telecomIsInCall():
                     ad.log.error("Still in call after hungup")
                     self.result_info["Call Teardown Failure"] += 1
-                    self._take_bug_report("%s_call_No_%s_teardown_failure" %
-                                          (self.test_name,
-                                           the_number), begin_time)
-                    return False
-        self.log.info("Call setup and teardown succeed.")
-        self.result_info["Call Success"] += 1
-        return True
+                    failure_reason = "teardown"
+                    result = False
+        self.result_info["Call Total"] += 1
+        if not result:
+            self.log.info("%s test failed", log_msg)
+            test_name = "%s_call_No_%s_%s_failure" % (
+                self.test_name, the_number, failure_reason)
+            for ad in ads:
+                log_path = os.path.join(
+                    self.log_path, test_name, "%s_binder" % ad.serial)
+                utils.create_dir(log_path)
+                ad.adb.pull("/sys/kernel/debug/binder %s" % log_path)
+            self._take_bug_report(test_name, begin_time)
+        else:
+            self.log.info("%s test succeed", log_msg)
+            self.result_info["Call Success"] += 1
+
+        return result
 
     def _prefnetwork_mode_change(self, sub_id):
         # ModePref change to non-LTE
@@ -343,20 +356,19 @@ class TelLiveStressTest(TelephonyBaseTest):
         time.sleep(WAIT_TIME_AFTER_MODE_CHANGE)
         rat = get_current_voice_rat(self.log, self.dut)
         self.dut.log.info("Current Voice RAT is %s", rat)
+        self.result_info["RAT Change Total"] += 1
         if rat != "LTE":
-            self.result_info["RAT change failure"] += 1
+            self.result_info["RAT Change Failure"] += 1
             self._take_bug_report("%s_rat_change_failure" % self.test_name,
                                   begin_time)
             return False
-        return True
+        else:
+            self.result_info["RAT Change Success"] += 1
+            return True
 
     def _get_result_message(self):
-        msg_list = ["%s: %s" % (count, self.result_info[count]) for  count in (
-            "Total Calls", "Call Setup Failure", "Call Maintenance Failure",
-            "Call Teardown Failure", "Total SMS", "SMS failure",
-            "Total MMS", "MMS failure", "Total file download",
-            "File download failure", "Call Success", "SMS Success",
-            "MMS Success", "File download Success")]
+        msg_list = ["%s: %s" % (count, self.result_info[count])
+                    for count in sorted(self.result_info.keys())]
         return ", ".join(msg_list)
 
     def _write_perf_json(self):
@@ -366,7 +378,8 @@ class TelLiveStressTest(TelephonyBaseTest):
 
     def _init_perf_json(self):
         self.perf_file = os.path.join(
-            self.log_path, "%s_perf_data.json" % self.test_name)
+            self.log_path, "%s_perf_data_%s.json" % (
+                self.test_name, self.begin_time))
         self.perf_data = self.android_devices[0].build_info.copy()
         self.perf_data["model"] = self.android_devices[0].model
         self._write_perf_json()
@@ -409,7 +422,6 @@ class TelLiveStressTest(TelephonyBaseTest):
         while time.time() < self.finishing_time:
             try:
                 self._make_phone_call(call_verification_func)
-                self.result_info["Total Calls"] += 1
                 time.sleep(
                     random.randrange(self.min_sleep_time, self.max_sleep_time))
             except IGNORE_EXCEPTIONS as e:
@@ -421,40 +433,17 @@ class TelLiveStressTest(TelephonyBaseTest):
                 self.log.error(e)
                 return False
             self.log.info("%s", dict(self.result_info))
-        if any([
-                self.result_info["Call Setup Failure"],
+        if any([self.result_info["Call Setup Failure"],
                 self.result_info["Call Maintenance Failure"],
-                self.result_info["Call Teardown Failure"]
-        ]):
+                self.result_info["Call Teardown Failure"]]):
             return False
         else:
             return True
 
-    def volte_modechange_volte_test(self):
-        sub_id = self.dut.droid.subscriptionGetDefaultSubId()
+    def message_test(self, max_wait_time=MAX_WAIT_TIME_SMS_RECEIVE):
         while time.time() < self.finishing_time:
             try:
-                self._make_phone_call(call_verification_func=is_phone_in_call_volte)
-                self.result_info["Total Calls"] += 1
-                self._prefnetwork_mode_change(sub_id)
-            except IGNORE_EXCEPTIONS as e:
-                self.log.error("Exception error %s", str(e))
-                self.result_info["Exception Errors"] += 1
-            except Exception as e:
-                self.log.error(e)
-                return False
-            self.log.info(dict(self.result_info))
-            if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
-                return False
-        if self.result_info["Call Failure"] or self.result_info["RAT change failure"]:
-            return False
-        else:
-            return True
-
-    def message_test(self):
-        while time.time() < self.finishing_time:
-            try:
-                self._send_message()
+                self._send_message(max_wait_time=max_wait_time)
                 time.sleep(
                     random.randrange(self.min_sleep_time, self.max_sleep_time))
             except IGNORE_EXCEPTIONS as e:
@@ -466,45 +455,47 @@ class TelLiveStressTest(TelephonyBaseTest):
             self.log.info(dict(self.result_info))
             if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
                 return False
-        if self.result_info["SMS failure"] or (
-                self.result_info["MMS failure"] / self.result_info["Total MMS"]
+        if self.result_info["SMS Failure"] or (
+                self.result_info["MMS Failure"] / self.result_info["MMS Total"]
                 > 0.3):
             return False
         else:
             return True
 
-    def data_test(self):
+    def _data_download(self):
         #file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB", "1GB"]
-        file_names = ["5MB", "10MB", "20MB", "50MB", "200MB", "512MB"]
+        file_names = ["5MB", "10MB", "20MB", "50MB", "200MB"]
+        begin_time = get_current_epoch_time()
+        start_qxdm_loggers(self.log, self.android_devices)
+        self.tcpdump_proc = None
+        self.dut.log.info(dict(self.result_info))
+        selection = random.randrange(0, len(file_names))
+        file_name = file_names[selection]
+        if self.result_info["File Download Failure"] < 1:
+            self.tcpdump_proc = start_adb_tcpdump(
+                self.dut, "%s_file_download" % self.test_name, mask="all")
+        self.result_info["File Download Total"] += 1
+        if not active_file_download_test(self.log, self.dut, file_name):
+            self.result_info["File Download Failure"] += 1
+            if self.result_info["File Download Failure"] == 1:
+                if self.tcpdump_proc is not None:
+                    stop_adb_tcpdump(
+                        self.dut, self.tcpdump_proc, True,
+                        "%s_file_download_failure" % self.test_name)
+                    self._take_bug_report(
+                        "%s_file_download_failure" % self.test_name,
+                        begin_time)
+            return False
+        else:
+            self.result_info["File Download Success"] += 1
+            if self.tcpdump_proc is not None:
+                stop_adb_tcpdump(self.dut, self.tcpdump_proc, False)
+            return True
+
+    def data_test(self):
         while time.time() < self.finishing_time:
             try:
-                begin_time = get_current_epoch_time()
-                start_qxdm_loggers(self.log, self.android_devices)
-                self.tcpdump_proc = None
-                self.dut.log.info(dict(self.result_info))
-                selection = random.randrange(0, len(file_names))
-                file_name = file_names[selection]
-                if self.result_info["File download failure"] < 1:
-                    self.tcpdump_proc = start_adb_tcpdump(
-                        self.dut,
-                        "%s_file_download" % self.test_name,
-                        mask="all")
-                if not active_file_download_test(self.log, self.dut,
-                                                 file_name):
-                    self.result_info["File download failure"] += 1
-                    if self.result_info["File download failure"] == 1:
-                        if self.tcpdump_proc is not None:
-                            stop_adb_tcpdump(
-                                self.dut, self.tcpdump_proc, True,
-                                "%s_file_download_failure" % self.test_name)
-                        self._take_bug_report(
-                            "%s_file_download_failure" % self.test_name,
-                            begin_time)
-                else:
-                    self.result_info["File download Success"] += 1
-                    if self.tcpdump_proc is not None:
-                        stop_adb_tcpdump(self.dut, self.tcpdump_proc, False)
-                self.result_info["Total file download"] += 1
+                self._data_download()
                 time.sleep(
                     random.randrange(self.min_sleep_time, self.max_sleep_time))
             except IGNORE_EXCEPTIONS as e:
@@ -517,8 +508,8 @@ class TelLiveStressTest(TelephonyBaseTest):
             if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
                 self.log.error("Too many %s errors", IGNORE_EXCEPTIONS)
                 return False
-        if self.result_info["File download failure"] / self.result_info[
-                "Total file download"] > 0.1:
+        if self.result_info["File Download Failure"] / self.result_info[
+                "File Download Total"] > 0.1:
             return False
         else:
             return True
@@ -542,14 +533,32 @@ class TelLiveStressTest(TelephonyBaseTest):
         self.result_detail = result_message
         return all(results)
 
-    def _get_result_message_rat_change(self):
-        msg_list = ["%s: %s" % (count, self.result_info[count]) for  count in (
-            "Total Calls", "Call Setup Failure", "Call Maintenance Failure",
-            "Call Teardown Failure", "RAT change failure", "Call Success")]
-        return ", ".join(msg_list)
+    def volte_modechange_volte_test(self):
+        sub_id = self.dut.droid.subscriptionGetDefaultSubId()
+        while time.time() < self.finishing_time:
+            try:
+                run_multithread_func(
+                    self.log,
+                    [(self._data_download, []),
+                     (self._make_phone_call, [is_phone_in_call_volte]),
+                     (self._send_message, [])])
+                self._prefnetwork_mode_change(sub_id)
+            except IGNORE_EXCEPTIONS as e:
+                self.log.error("Exception error %s", str(e))
+                self.result_info["Exception Errors"] += 1
+            except Exception as e:
+                self.log.error(e)
+                return False
+            self.log.info(dict(self.result_info))
+            if self.result_info["Exception Errors"] > EXCEPTION_TOLERANCE:
+                return False
+        if self.result_info["Call Failure"] or self.result_info[
+                "RAT Change Failure"] or self.result_info["SMS Failure"]:
+            return False
+        else:
+            return True
 
-    def parallel_volte_tests(self, setup_func=None):
-        self.log.info(self._get_result_message_rat_change())
+    def parallel_with_network_change_tests(self, setup_func=None):
         if setup_func and not setup_func():
             self.log.error("Test setup %s failed", setup_func.__name__)
             return False
@@ -557,7 +566,7 @@ class TelLiveStressTest(TelephonyBaseTest):
         results = run_multithread_func(self.log,
                                        [(self.volte_modechange_volte_test, []),
                                         (self.crash_check_test, [])])
-        result_message = self._get_result_message_rate_change()
+        result_message = self._get_result_message()
         self.log.info(result_message)
         self._update_perf_json()
         self.result_detail = result_message
@@ -615,7 +624,7 @@ class TelLiveStressTest(TelephonyBaseTest):
     @TelephonyBaseTest.tel_test_wrap
     def test_volte_modeprefchange_parallel_stress(self):
         """ VoLTE Mode Pref call stress test"""
-        return self.parallel_volte_tests(
+        return self.parallel_with_network_change_tests(
             setup_func=self._setup_lte_volte_enabled)
 
     """ Tests End """

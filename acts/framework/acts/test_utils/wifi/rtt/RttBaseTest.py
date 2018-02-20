@@ -28,7 +28,8 @@ class RttBaseTest(BaseTestClass):
     super(RttBaseTest, self).__init__(controllers)
 
   def setup_test(self):
-    required_params = ("rtt_reference_distance_mm",)
+    required_params = ("lci_reference", "lcr_reference",
+                       "rtt_reference_distance_mm")
     self.unpack_userparams(required_params)
 
     for ad in self.android_devices:
@@ -42,6 +43,7 @@ class RttBaseTest(BaseTestClass):
           self.log.info('RTT not available. Waiting ...')
           rutils.wait_for_event(ad, rconsts.BROADCAST_WIFI_RTT_AVAILABLE)
       ad.ed.clear_all_events()
+      rutils.config_privilege_override(ad, False)
 
   def teardown_test(self):
     for ad in self.android_devices:

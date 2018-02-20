@@ -766,6 +766,23 @@ class AndroidDevice:
         utils.stop_standing_subprocess(self.adb_logcat_process)
         self.adb_logcat_process = None
 
+    def get_apk_uid(self, apk_name):
+        """Get the uid of the given apk.
+
+        Args:
+        apk_name: Name of the package, e.g., com.android.phone.
+
+        Returns:
+        Linux UID for the apk.
+        """
+        output = self.adb.shell("dumpsys package %s | grep userId=" % apk_name,
+                                ignore_status=True)
+        result = re.search(r"userId=(\d+)", output)
+        if result:
+            return result.group(1)
+        else:
+            None
+
     def is_apk_installed(self, package_name):
         """Check if the given apk is already installed.
 
@@ -1097,6 +1114,26 @@ class AndroidDevice:
         self.root_adb()
         if stop_at_lock_screen:
             return
+        if not self.ensure_screen_on():
+            self.log.error("User window cannot come up")
+            raise AndroidDeviceError("User window cannot come up")
+        self.start_services(self.skip_sl4a)
+
+    def restart_runtime(self):
+        """Restarts android runtime.
+
+        Terminate all sl4a sessions, restarts runtime, wait for framework
+        complete restart, and restart an sl4a session if restart_sl4a is True.
+        """
+        self.stop_services()
+        self.log.info("Restarting android runtime")
+        self.adb.shell("stop")
+        self.adb.shell("start")
+        self.wait_for_boot_completion()
+        self.root_adb()
+        if not self.ensure_screen_on():
+            self.log.error("User window cannot come up")
+            raise AndroidDeviceError("User window cannot come up")
         self.start_services(self.skip_sl4a)
 
     def search_logcat(self, matching_string, begin_time=None):

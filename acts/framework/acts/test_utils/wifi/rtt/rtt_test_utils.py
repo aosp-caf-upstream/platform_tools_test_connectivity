@@ -69,51 +69,75 @@ def fail_on_event(ad, event_name, timeout=EVENT_TIMEOUT):
     ad.log.info('%s%s not seen (as expected)', prefix, event_name)
     return
 
-def get_rtt_supporting_networks(scanned_networks):
-  """Filter the input list and only return those networks which support
-    802.11mc.
 
-    Args:
-      scanned_networks: A list of networks from scan results.
+def config_privilege_override(dut, override_to_no_privilege):
+  """Configure the device to override the permission check and to disallow any
+  privileged RTT operations, e.g. disallow one-sided RTT to Responders (APs)
+  which do not support IEEE 802.11mc.
 
-    Returns: a sub-set of the scanned_networks which support 802.11mc.
-    """
-  rtt_networks = []
+  Args:
+    dut: Device to configure.
+    override_to_no_privilege: True to indicate no privileged ops, False for
+                              default (which will allow privileged ops).
+  """
+  dut.adb.shell("cmd wifirtt set override_assume_no_privilege %d" % (
+    1 if override_to_no_privilege else 0))
+
+
+def get_rtt_constrained_results(scanned_networks, support_rtt):
+  """Filter the input list and only return those networks which either support
+  or do not support RTT (IEEE 802.11mc.)
+
+  Args:
+    scanned_networks: A list of networks from scan results.
+      support_rtt: True - only return those APs which support RTT, False - only
+                   return those APs which do not support RTT.
+
+  Returns: a sub-set of the scanned_networks per support_rtt constraint.
+  """
+  matching_networks = []
   for network in scanned_networks:
-    if (rconsts.SCAN_RESULT_KEY_RTT_RESPONDER in network and
-        network[rconsts.SCAN_RESULT_KEY_RTT_RESPONDER]):
-      rtt_networks.append(network)
+    if support_rtt:
+      if (rconsts.SCAN_RESULT_KEY_RTT_RESPONDER in network and
+          network[rconsts.SCAN_RESULT_KEY_RTT_RESPONDER]):
+        matching_networks.append(network)
+    else:
+      if (rconsts.SCAN_RESULT_KEY_RTT_RESPONDER not in network or
+            not network[rconsts.SCAN_RESULT_KEY_RTT_RESPONDER]):
+        matching_networks.append(network)
 
-  return rtt_networks
+  return matching_networks
 
 
 def scan_networks(dut):
   """Perform a scan and return scan results.
 
-    Args:
-      dut: Device under test.
+  Args:
+    dut: Device under test.
 
-    Returns: an array of scan results.
-    """
+  Returns: an array of scan results.
+  """
   wutils.start_wifi_connection_scan(dut)
   return dut.droid.wifiGetScanResults()
 
 
-def scan_for_rtt_supporting_networks(dut, repeat=0):
-  """Perform a scan and return scan results.
+def scan_with_rtt_support_constraint(dut, support_rtt, repeat=0):
+  """Perform a scan and return scan results of APs: only those that support or
+  do not support RTT (IEEE 802.11mc) - per the support_rtt parameter.
 
-    Args:
-      dut: Device under test.
-      repeat: Re-scan this many times to find an RTT supporting network.
+  Args:
+    dut: Device under test.
+    support_rtt: True - only return those APs which support RTT, False - only
+                 return those APs which do not support RTT.
+    repeat: Re-scan this many times to find an RTT supporting network.
 
-    Returns: an array of scan results.
-    """
+  Returns: an array of scan results.
+  """
   for i in range(repeat + 1):
-    wutils.start_wifi_connection_scan(dut)
-    scan_results = dut.droid.wifiGetScanResults()
-    rtt_aps = get_rtt_supporting_networks(scan_results)
-    if len(rtt_aps) != 0:
-      return rtt_aps
+    scan_results = scan_networks(dut)
+    aps = get_rtt_constrained_results(scan_results, support_rtt)
+    if len(aps) != 0:
+      return aps
 
   return []
 
@@ -195,7 +219,8 @@ def validate_aware_peer_id_result(range_result, peer_id, description):
                        '%s: MAC Address not empty!' % description)
 
 
-def extract_stats(results, range_reference_mm, range_margin_mm, max_rssi):
+def extract_stats(results, range_reference_mm, range_margin_mm, min_rssi,
+    reference_lci, reference_lcr):
   """Extract statistics from a list of RTT results. Returns a dictionary
    with results:
      - num_samples
@@ -211,12 +236,19 @@ def extract_stats(results, range_reference_mm, range_margin_mm, max_rssi):
      - rssi_mean
      - rssi_std_dev
      - status_codes
+     - lcis: extracted list of all of the individual LCI
+     - lcrs: extracted list of all of the individual LCR
+     - any_lci_mismatch: True/False - checks if all LCI results are identical to
+                         the reference LCI.
+     - any_lcr_mismatch: True/False - checks if all LCR results are identical to
+                         the reference LCR.
 
   Args:
     results: List of RTT results.
     range_reference_mm: Reference value for the distance (in mm)
     range_margin_mm: Acceptable absolute margin for distance (in mm)
-    max_rssi: Acceptable maximum RSSI value.
+    min_rssi: Acceptable minimum RSSI value.
+    reference_lci, reference_lcr: Reference values for LCI and LCR.
 
   Returns: A dictionary of stats.
   """
@@ -226,6 +258,8 @@ def extract_stats(results, range_reference_mm, range_margin_mm, max_rssi):
   stats['num_failures'] = 0
   stats['num_range_out_of_margin'] = 0
   stats['num_invalid_rssi'] = 0
+  stats['any_lci_mismatch'] = False
+  stats['any_lcr_mismatch'] = False
 
   range_max_mm = range_reference_mm + range_margin_mm
   range_min_mm = range_reference_mm - range_margin_mm
@@ -234,6 +268,8 @@ def extract_stats(results, range_reference_mm, range_margin_mm, max_rssi):
   distance_std_devs = []
   rssis = []
   status_codes = []
+  lcis = []
+  lcrs = []
 
   for i in range(len(results)):
     result = results[i]
@@ -256,8 +292,15 @@ def extract_stats(results, range_reference_mm, range_margin_mm, max_rssi):
 
     rssi = result[rconsts.EVENT_CB_RANGING_KEY_RSSI]
     rssis.append(rssi)
-    if not 0 <= rssi <= max_rssi:
+    if not min_rssi <= rssi <= 0:
       stats['num_invalid_rssi'] = stats['num_invalid_rssi'] + 1
+
+    lcis.append(result[rconsts.EVENT_CB_RANGING_KEY_LCI])
+    if (result[rconsts.EVENT_CB_RANGING_KEY_LCI] != reference_lci):
+      stats['any_lci_mismatch'] = True
+    lcrs.append(result[rconsts.EVENT_CB_RANGING_KEY_LCR])
+    if (result[rconsts.EVENT_CB_RANGING_KEY_LCR] != reference_lcr):
+      stats['any_lcr_mismatch'] = True
 
   stats['distances'] = distances
   if len(distances) > 0:
@@ -271,5 +314,7 @@ def extract_stats(results, range_reference_mm, range_margin_mm, max_rssi):
   if len(rssis) > 1:
     stats['rssi_std_dev'] = statistics.stdev(rssis)
   stats['status_codes'] = status_codes
+  stats['lcis'] = lcis
+  stats['lcrs'] = lcrs
 
   return stats
