@@ -29,6 +29,9 @@ MAX_WAIT_TIME_CALL_DROP = 60
 # Wait time between state check retry
 WAIT_TIME_BETWEEN_STATE_CHECK = 5
 
+# Max wait time for state change
+MAX_WAIT_TIME_FOR_STATE_CHANGE = 60
+
 # Max time to wait after caller make a call and before
 # callee start ringing
 MAX_WAIT_TIME_CALLEE_RINGING = 90
@@ -427,6 +430,11 @@ PHONE_TYPE_NONE = "NONE"
 PHONE_TYPE_CDMA = "CDMA"
 PHONE_TYPE_SIP = "SIP"
 
+# Constant for SIM Power State
+CARD_POWER_DOWN = 0
+CARD_POWER_UP = 1
+CARD_POWER_UP_PASS_THROUGH = 2
+
 # Constant for SIM State
 SIM_STATE_READY = "READY"
 SIM_STATE_UNKNOWN = "UNKNOWN"
@@ -448,6 +456,10 @@ DATA_STATE_UNKNOWN = "UNKNOWN"
 # Constant for Data Roaming State
 DATA_ROAMING_ENABLE = 1
 DATA_ROAMING_DISABLE = 0
+
+# Constant for ConnectivityManager Data Connection
+TYPE_MOBILE = 0
+TYPE_WIFI = 1
 
 # Constant for Telephony Manager Call State
 TELEPHONY_STATE_RINGING = "RINGING"

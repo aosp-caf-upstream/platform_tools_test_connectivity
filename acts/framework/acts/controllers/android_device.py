@@ -853,11 +853,13 @@ class AndroidDevice:
             f_name = "adblog,{},{}.txt".format(self.model, self.serial)
             utils.create_dir(self.log_path)
             logcat_file_path = os.path.join(self.log_path, f_name)
-        try:
+        if hasattr(self, 'adb_logcat_param'):
             extra_params = self.adb_logcat_param
-        except AttributeError:
+        else:
             extra_params = "-b all"
-        cmd = "adb -s {} logcat -v threadtime {} >> {}".format(
+
+        # TODO(markdr): Pull 'adb -s %SERIAL' from the AdbProxy object.
+        cmd = "adb -s {} logcat -T 1 -v threadtime {} >> {}".format(
             self.serial, extra_params, logcat_file_path)
         self.adb_logcat_process = utils.start_standing_subprocess(cmd)
         self.adb_logcat_file_path = logcat_file_path
@@ -992,8 +994,6 @@ class AndroidDevice:
             current_time = utils.get_current_epoch_time()
             seconds = int(math.ceil((current_time - begin_time) / 1000.0))
             cmd = "%s -mtime -%ss" % (cmd, seconds)
-            self.log.debug("Find files modified in last %s seconds in %s",
-                           seconds, directory)
         for skip_file in skip_files:
             cmd = "%s ! -iname %s" % (cmd, skip_file)
         out = self.adb.shell(cmd, ignore_status=True)
@@ -1033,7 +1033,8 @@ class AndroidDevice:
                 crash_reports.extend(crashes)
         if crash_reports and log_crash_report:
             test_name = test_name or time.strftime("%m-%d-%Y-%H-%M-%S")
-            crash_log_path = os.path.join(self.log_path, test_name, "Crashes")
+            crash_log_path = os.path.join(self.log_path, test_name,
+                                          "Crashes_%s" % self.serial)
             utils.create_dir(crash_log_path)
             self.pull_files(crash_reports, crash_log_path)
         return crash_reports
@@ -1043,10 +1044,7 @@ class AndroidDevice:
         output = self.adb.shell("ps -ef | grep mdlog")
         match = re.search(r"diag_mdlog.*", output)
         log_path = None
-        diag_mdlog_cmd = None
-        qxdm_logs = None
         if match:
-            diag_mdlog_cmd = match.group(0)
             m = re.search(r"-o (\S+)", output)
             if m: log_path = m.group(1)
             # Neet to sleep 20 seconds for the log to be generated
@@ -1056,16 +1054,16 @@ class AndroidDevice:
             return
         qxdm_logs = self.get_file_names(log_path, begin_time=begin_time)
         if qxdm_logs:
-            qxdm_log_path = os.path.join(self.log_path, test_name, "QXDM_Logs")
+            qxdm_log_path = os.path.join(self.log_path, test_name,
+                                         "QXDM_%s" % self.serial)
             utils.create_dir(qxdm_log_path)
             self.log.info("Pull QXDM Log %s to %s", qxdm_logs, qxdm_log_path)
             self.pull_files(qxdm_logs, qxdm_log_path)
-        if diag_mdlog_cmd:
-            self.log.debug("start qxdm logging by %s", diag_mdlog_cmd)
-            self.adb.shell_nb(diag_mdlog_cmd)
+        else:
+            self.log.error("Didn't find QXDM logs in %s." % log_path)
         if "Verizon" in self.adb.getprop("gsm.sim.operator.alpha"):
             omadm_log_path = os.path.join(self.log_path, test_name,
-                                          "OMADM_Log")
+                                          "OMADM_%s" % self.serial)
             utils.create_dir(omadm_log_path)
             self.log.info("Pull OMADM Log")
             self.adb.pull(
@@ -1491,6 +1489,12 @@ class AndroidDevice:
         self.adb.shell(
             "am start -n com.google.android.setupwizard/.SetupWizardExitActivity"
         )
+        #Wait up to 5 seconds for user_setup_complete to be updated
+        for _ in range(5):
+            if self.is_user_setup_complete():
+                return
+            time.sleep(1)
+        #If fail to exit setup wizard, set local.prop and reboot
         if not self.is_user_setup_complete():
             self.adb.shell("echo ro.test_harness=1 > /data/local.prop")
             self.adb.shell("chmod 644 /data/local.prop")
