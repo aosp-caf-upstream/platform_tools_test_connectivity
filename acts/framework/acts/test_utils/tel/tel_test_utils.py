@@ -1100,7 +1100,7 @@ def hangup_call(log, ad):
             return False
     finally:
         ad.droid.telephonyStopTrackingCallStateChange()
-    return True
+    return not ad.droid.telecomIsInCall()
 
 
 def disconnect_call_by_id(log, ad, call_id):
@@ -1302,6 +1302,7 @@ def initiate_emergency_dialer_call_by_adb(
     try:
         # Make a Call
         ad.wakeup_screen()
+        ad.send_keycode("MENU")
         ad.log.info("Call %s", callee_number)
         ad.adb.shell("am start -a com.android.phone.EmergencyDialer.DIAL")
         ad.adb.shell(
@@ -1744,6 +1745,13 @@ def call_setup_teardown_for_subscription(
         else:
             ad_callee.log.info("Callee answered the call successfully")
 
+        for ad in (ad_caller, ad_callee):
+            if not wait_for_in_call_active(ad):
+                result = False
+            if not ad.droid.telecomCallGetAudioState():
+                ad.log.error("Audio is not in call state")
+                result = False
+
         elapsed_time = 0
         while (elapsed_time < wait_time_in_call):
             CHECK_INTERVAL = min(CHECK_INTERVAL,
@@ -1766,12 +1774,12 @@ def call_setup_teardown_for_subscription(
                                  time_message)
                     result = False
                 if not result:
-                    return result
-        return result
-    finally:
-        if result and ad_hangup and not hangup_call(log, ad_hangup):
+                    break
+        if ad_hangup and not hangup_call(log, ad_hangup):
             ad_hangup.log.info("Failed to hang up the call")
             result = False
+        return result
+    finally:
         if not result:
             for ad in [ad_caller, ad_callee]:
                 reasons = ad.search_logcat(
@@ -1877,7 +1885,7 @@ def verify_http_connection(log,
         state = ad.droid.pingHost(url)
         ad.log.info("Connection to %s is %s", url, state)
         if expected_state == state:
-            ad.log.info("Verify Internet connection state=%s succeeded",
+            ad.log.info("Verify Internet connection state is %s succeeded",
                         str(expected_state))
             return True
         if i < retry:
@@ -2277,6 +2285,15 @@ def http_file_download_by_sl4a(ad,
         if not getattr(ad, "downloading_droid", None):
             ad.downloading_droid, ad.downloading_ed = ad.get_droid()
             ad.downloading_ed.start()
+        else:
+            try:
+                if not ad.downloading_droid.is_live:
+                    ad.downloading_droid, ad.downloading_ed = ad.get_droid()
+                    ad.downloading_ed.start()
+            except Exception as e:
+                ad.log.info(e)
+                ad.downloading_droid, ad.downloading_ed = ad.get_droid()
+                ad.downloading_ed.start()
         data_accounting = {
             "mobile_rx_bytes":
             ad.droid.getMobileRxBytes(),
@@ -2972,6 +2989,40 @@ def wait_for_droid_in_call(log, ad, max_time):
     return _wait_for_droid_in_state(log, ad, max_time, is_phone_in_call)
 
 
+def is_phone_in_call_active(ad, call_id=None):
+    """Return True if phone in active call.
+
+    Args:
+        log: log object.
+        ad:  android device.
+        call_id: the call id
+    """
+    if not call_id:
+        call_id = ad.droid.telecomCallGetCallIds()[0]
+    call_state = ad.droid.telecomCallGetCallState(call_id)
+    ad.log.info("%s state is %s", call_id, call_state)
+    return call_state == "ACTIVE"
+
+
+def wait_for_in_call_active(ad, timeout=5, interval=1, call_id=None):
+    """Wait for call reach active state.
+
+    Args:
+        log: log object.
+        ad:  android device.
+        call_id: the call id
+    """
+    if not call_id:
+        call_id = ad.droid.telecomCallGetCallIds()[0]
+    args = [ad, call_id]
+    if not wait_for_state(is_phone_in_call_active, True, timeout, interval,
+                          *args):
+        ad.log.error("Call did not reach ACTIVE state")
+        return False
+    else:
+        return True
+
+
 def wait_for_telecom_ringing(log, ad, max_time=MAX_WAIT_TIME_TELECOM_RINGING):
     """Wait for android to be in telecom ringing state.
 
@@ -3549,6 +3600,16 @@ def sms_send_receive_verify_for_subscription(
         if not getattr(ad, "messaging_droid", None):
             ad.messaging_droid, ad.messaging_ed = ad.get_droid()
             ad.messaging_ed.start()
+        else:
+            try:
+                if not ad.messaging_droid.is_live:
+                    ad.messaging_droid, ad.messaging_ed = ad.get_droid()
+                    ad.messaging_ed.start()
+            except Exception as e:
+                ad.log.info(e)
+                ad.messaging_droid, ad.messaging_ed = ad.get_droid()
+                ad.messaging_ed.start()
+
     for text in array_message:
         # set begin_time 300ms before current time to system time discrepency
         begin_time = get_current_epoch_time() - 300
@@ -3968,14 +4029,29 @@ def ensure_network_generation_for_subscription(
     current_network_preference = \
             ad.droid.telephonyGetPreferredNetworkTypesForSubscription(
                 sub_id)
-
-    if (current_network_preference is not network_preference
-            and not ad.droid.telephonySetPreferredNetworkTypesForSubscription(
-                network_preference, sub_id)):
-        ad.log.error(
-            "Network preference is %s. Set Preferred Networks to %s failed.",
-            current_network_preference, network_preference)
-        return False
+    for _ in range(3):
+        if current_network_preference == network_preference:
+            break
+        if not ad.droid.telephonySetPreferredNetworkTypesForSubscription(
+                network_preference, sub_id):
+            ad.log.info(
+                "Network preference is %s. Set Preferred Networks to %s failed.",
+                current_network_preference, network_preference)
+            reasons = ad.search_logcat(
+                "REQUEST_SET_PREFERRED_NETWORK_TYPE error")
+            if reasons:
+                reason_log = reasons[-1]["log_message"]
+                ad.log.info(reason_log)
+                if "DEVICE_IN_USE" in reason_log:
+                    time.sleep(5)
+                else:
+                    ad.log.error("Failed to set Preferred Networks to %s",
+                                 network_preference)
+                    return False
+            else:
+                ad.log.error("Failed to set Preferred Networks to %s",
+                             network_preference)
+                return False
 
     if is_droid_in_network_generation_for_subscription(
             log, ad, sub_id, generation, voice_or_data):
@@ -5279,8 +5355,6 @@ def fastboot_wipe(ad, skip_setup_wizard=True):
         except Exception as e:
             ad.log.error("Exception error %s", e)
     ad.root_adb()
-    if not ad.ensure_screen_on():
-        ad.log.error("User window cannot come up")
     if result:
         # Try to reinstall for three times as the device might not be
         # ready to apk install shortly after boot complete.
@@ -5290,8 +5364,31 @@ def fastboot_wipe(ad, skip_setup_wizard=True):
             ad.log.info("Re-install sl4a")
             ad.adb.install("-r /tmp/base.apk", ignore_status=True)
             time.sleep(10)
-    ad.start_services(ad.skip_sl4a, skip_setup_wizard=skip_setup_wizard)
+    try:
+        ad.start_adb_logcat()
+    except:
+        ad.log.exception("Failed to start adb logcat!")
+    if skip_setup_wizard:
+        ad.exit_setup_wizard()
+    if ad.skip_sl4a: return status
+    bring_up_sl4a(ad)
+
     return status
+
+
+def bring_up_sl4a(ad, attemps=3):
+    for i in range(attemps):
+        try:
+            droid, ed = ad.get_droid()
+            ed.start()
+            ad.log.info("Broght up new sl4a session")
+        except Exception as e:
+            if i < attemps - 1:
+                ad.log.info(e)
+                time.sleep(10)
+            else:
+                ad.log.error(e)
+                raise
 
 
 def reboot_device(ad):
@@ -5325,8 +5422,7 @@ def refresh_sl4a_session(ad):
         ad.terminate_all_sessions()
         ad.ensure_screen_on()
         ad.log.info("Open new sl4a connection")
-        droid, ed = ad.get_droid()
-        ed.start()
+        bring_up_sl4a(ad)
 
 
 def reset_device_password(ad, device_password=None):
@@ -5339,6 +5435,12 @@ def reset_device_password(ad, device_password=None):
             ad.droid.setDevicePassword(device_password)
         except Exception as e:
             ad.log.warning("setDevicePassword failed with %s", e)
+            try:
+                ad.droid.setDevicePassword(device_password, "1111")
+            except Exception as e:
+                ad.log.warning(
+                    "setDevicePassword providing previous password error: %s",
+                    e)
         time.sleep(2)
         if screen_lock:
             # existing password changed
