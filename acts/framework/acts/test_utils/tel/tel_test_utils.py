@@ -29,7 +29,8 @@ from acts import utils
 from queue import Empty
 from acts.asserts import abort_all
 from acts.controllers.adb import AdbError
-from acts.controllers.event_dispatcher import EventDispatcher
+from acts.controllers.android_device import DEFAULT_QXDM_LOG_PATH
+from acts.controllers.sl4a_lib.event_dispatcher import EventDispatcher
 from acts.test_utils.tel.tel_defines import AOSP_PREFIX
 from acts.test_utils.tel.tel_defines import CARD_POWER_DOWN
 from acts.test_utils.tel.tel_defines import CARD_POWER_UP
@@ -83,6 +84,8 @@ from acts.test_utils.tel.tel_defines import SERVICE_STATE_IN_SERVICE
 from acts.test_utils.tel.tel_defines import SERVICE_STATE_MAPPING
 from acts.test_utils.tel.tel_defines import SERVICE_STATE_OUT_OF_SERVICE
 from acts.test_utils.tel.tel_defines import SERVICE_STATE_POWER_OFF
+from acts.test_utils.tel.tel_defines import SIM_STATE_LOADED
+from acts.test_utils.tel.tel_defines import SIM_STATE_NOT_READY
 from acts.test_utils.tel.tel_defines import SIM_STATE_PIN_REQUIRED
 from acts.test_utils.tel.tel_defines import SIM_STATE_READY
 from acts.test_utils.tel.tel_defines import SIM_STATE_UNKNOWN
@@ -538,12 +541,8 @@ def is_sim_ready(log, ad, sim_slot_id=None):
 
 
 def is_sim_ready_by_adb(log, ad):
-    if ad.adb.getprop("gsm.sim.state") == SIM_STATE_READY:
-        ad.log.debug("SIM state is ready")
-        return True
-    else:
-        ad.log.debug("Sim state is not ready")
-        return False
+    state = ad.adb.getprop("gsm.sim.state")
+    return state == SIM_STATE_READY or state == SIM_STATE_LOADED
 
 
 def wait_for_sim_ready_by_adb(log, ad, wait_time=90):
@@ -1750,22 +1749,21 @@ def call_setup_teardown_for_subscription(
             elapsed_time += CHECK_INTERVAL
             time_message = "at <%s>/<%s> second." % (elapsed_time,
                                                      wait_time_in_call)
-            if not verify_caller_func(log, ad_caller):
-                ad_caller.log.error("Caller is NOT in correct %s state at %s",
-                                    verify_caller_func.__name__, time_message)
-                result = False
-            else:
-                ad_caller.log.info("Caller is in correct %s state at %s",
-                                   verify_caller_func.__name__, time_message)
-            if not verify_callee_func(log, ad_callee):
-                ad_callee.log.error("Callee is NOT in correct %s state at %s",
-                                    verify_callee_func.__name__, time_message)
-                result = False
-            else:
-                ad_callee.log.info("Callee is in correct %s state at %s",
-                                   verify_callee_func.__name__, time_message)
-            if not result:
-                return result
+            for ad, call_func in [(ad_caller, verify_caller_func),
+                                  (ad_callee, verify_callee_func)]:
+                if not call_func(log, ad):
+                    ad.log.error("NOT in correct %s state at %s",
+                                 call_func.__name__, time_message)
+                    result = False
+                else:
+                    ad.log.info("In correct %s state at %s",
+                                call_func.__name__, time_message)
+                if not ad.droid.telecomCallGetAudioState():
+                    ad.log.error("Audio is not in call state at %s",
+                                 time_message)
+                    result = False
+                if not result:
+                    return result
         return result
     finally:
         if result and ad_hangup and not hangup_call(log, ad_hangup):
@@ -2165,7 +2163,7 @@ def http_file_download_by_chrome(ad,
     file_path = os.path.join(file_directory, file_name)
     # Remove pre-existing file
     ad.force_stop_apk("com.android.chrome")
-    file_to_be_delete =  os.path.join(file_directory, "*%s*" % file_name)
+    file_to_be_delete = os.path.join(file_directory, "*%s*" % file_name)
     ad.adb.shell("rm -f %s" % file_to_be_delete)
     ad.adb.shell("rm -rf /sdcard/Download/.*")
     ad.adb.shell("rm -f /sdcard/Download/.*")
@@ -3447,7 +3445,7 @@ def sms_send_receive_verify_for_subscription(log, ad_tx, ad_rx, subid_tx,
         ad_rx.ed.clear_events(EventSmsReceived)
         ad_tx.ed.clear_events(EventSmsSentSuccess)
         ad_rx.droid.smsStartTrackingIncomingSmsMessage()
-        time.sleep(0.1) #sleep 100ms after starting event tracking
+        time.sleep(0.1)  #sleep 100ms after starting event tracking
         try:
             ad_tx.droid.smsSendTextMessage(phonenumber_rx, text, True)
             try:
@@ -4872,21 +4870,29 @@ def get_number_from_tel_uri(uri):
         return None
 
 
-def find_qxdm_logger_mask(ad, mask):
+def find_qxdm_log_mask(ad, mask="default.cfg"):
     """Find QXDM logger mask."""
     if "/" not in mask:
         # Call nexuslogger to generate log mask
         start_nexuslogger(ad)
         # Find the log mask path
-        for path in ("/data/vendor/radio/diag_logs", "/data/diag_logs"):
-            if mask in ad.adb.shell("ls %s/cfg" % path, ignore_status=True):
-                ad.qxdm_logger_path = os.path.join(path, "logs")
-                return "%s/cfg/%s" % (path, mask)
+        for path in (DEFAULT_QXDM_LOG_PATH, "/data/diag_logs",
+                     "/vendor/etc/mdlog/"):
+            out = ad.adb.shell("find %s -type f -iname %s" % (
+                path, mask), ignore_status=True)
+            if out and "No such" not in out and "Permission denied" not in out:
+                if path.startswith("/vendor/"):
+                    ad.qxdm_log_path = DEFAULT_QXDM_LOG_PATH
+                else:
+                    ad.qxdm_log_path = path
+                return out.split("\n")[0]
+        if mask in ad.adb.shell("ls /vendor/etc/mdlog/"):
+            ad.qxdm_log_path = DEFAULT_QXDM_LOG_PATH
+            return "%s/%s" % ("/vendor/etc/mdlog/", mask)
     else:
         out = ad.adb.shell("ls %s" % mask, ignore_status=True)
         if out and "No such" not in out:
-            paths = mask.rsplit("/", 2)
-            ad.qxdm_logger_path = os.path.join(paths[0], "logs")
+            ad.qxdm_log_path = "/data/vendor/radio/diag_logs"
             return mask
     ad.log.warning("Could NOT find QXDM logger mask path for %s", mask)
 
@@ -4899,23 +4905,25 @@ def set_qxdm_logger_command(ad, mask=None):
 
     """
     ## Neet to check if log mask will be generated without starting nexus logger
+    masks = []
+    mask_path = None
     if mask:
-        mask_path = find_qxdm_logger_mask(ad, mask)
-    else:
-        for mask in ("QC_Default.cfg", "default.cfg"):
-            mask_path = find_qxdm_logger_mask(ad, mask)
-            if mask_path: break
+        masks = [mask]
+    masks.extend(["QC_Default.cfg", "default.cfg"])
+    for mask in masks:
+        mask_path = find_qxdm_log_mask(ad, mask)
+        if mask_path: break
     if not mask_path:
-        ad.log.error("Cannot find mask %s", mask)
+        ad.log.error("Cannot find QXDM mask %s", mask)
         ad.qxdm_logger_command = None
         return False
     else:
         ad.log.info("Use QXDM log mask %s", mask_path)
-        ad.log.debug("qxdm_logger_path = %s", ad.qxdm_logger_path)
+        ad.log.debug("qxdm_log_path = %s", ad.qxdm_log_path)
+        output_path = os.path.join(ad.qxdm_log_path, "logs")
         ad.qxdm_logger_command = ("diag_mdlog -f %s -o %s -s 50 -c" %
-                                  (mask_path, ad.qxdm_logger_path))
-        conf_path = os.path.split(ad.qxdm_logger_path)[0]
-        conf_path = os.path.join(conf_path, "diag.conf")
+                                  (mask_path, output_path))
+        conf_path = os.path.join(ad.qxdm_log_path, "diag.conf")
         # Enable qxdm always on so that after device reboot, qxdm will be
         # turned on automatically
         ad.adb.shell('echo "%s" > %s' % (ad.qxdm_logger_command, conf_path))
@@ -4938,15 +4946,17 @@ def stop_qxdm_logger(ad):
 def start_qxdm_logger(ad, begin_time=None):
     """Start QXDM logger."""
     # Delete existing QXDM logs 5 minutes earlier than the begin_time
-    if getattr(ad, "qxdm_logger_path"):
+    if getattr(ad, "qxdm_log_path", None):
+        seconds = None
         if begin_time:
             current_time = get_current_epoch_time()
             seconds = int((current_time - begin_time) / 1000.0) + 10 * 60
-            ad.adb.shell("find %s -type f -not -mtime -%ss -delete" %
-                         (ad.qxdm_logger_path, seconds))
-        elif len(ad.get_file_names(ad.qxdm_logger_path)) > 50:
-            ad.adb.shell("find %s -type f -not -mtime -900s -delete"
-                         % ad.qxdm_logger_path)
+        elif len(ad.get_file_names(ad.qxdm_log_path)) > 50:
+            seconds = 900
+        if seconds:
+            ad.adb.shell(
+                "find %s -type f -iname *.qmdl -not -mtime -%ss -delete" % (
+                ad.qxdm_log_path, seconds))
     if getattr(ad, "qxdm_logger_command", None):
         output = ad.adb.shell("ps -ef | grep mdlog") or ""
         if ad.qxdm_logger_command not in output:
@@ -4958,7 +4968,7 @@ def start_qxdm_logger(ad, begin_time=None):
                 stop_qxdm_logger(ad)
             ad.log.info("Start QXDM logger")
             ad.adb.shell_nb(ad.qxdm_logger_command)
-        elif not ad.get_file_names(ad.qxdm_logger_path, 60):
+        elif not ad.get_file_names(ad.qxdm_log_path, 60):
             ad.log.debug("Existing diag_mdlog is not generating logs")
             stop_qxdm_logger(ad)
             ad.adb.shell_nb(ad.qxdm_logger_command)
@@ -5046,8 +5056,9 @@ def start_adb_tcpdump(ad, test_name, mask="ims"):
     begin_time = epoch_to_log_line_timestamp(get_current_epoch_time())
     begin_time = normalize_log_line_timestamp(begin_time)
 
-    file_name = "/sdcard/tcpdump/tcpdump_%s_%s_%s.pcap" % (
-        ad.serial, test_name, begin_time)
+    file_name = "/sdcard/tcpdump/tcpdump_%s_%s_%s.pcap" % (ad.serial,
+                                                           test_name,
+                                                           begin_time)
     ad.log.info("tcpdump file is %s", file_name)
     if mask == "all":
         cmd = "adb -s {} shell tcpdump -i any -s0 -w {}" . \
@@ -5170,7 +5181,10 @@ def reset_device_password(ad, device_password=None):
     screen_lock = ad.is_screen_lock_enabled()
     if device_password:
         refresh_sl4a_session(ad)
-        ad.droid.setDevicePassword(device_password)
+        try:
+            ad.droid.setDevicePassword(device_password)
+        except Exception as e:
+            ad.log.warning("setDevicePassword failed with %s", e)
         time.sleep(2)
         if screen_lock:
             # existing password changed
@@ -5191,7 +5205,10 @@ def reset_device_password(ad, device_password=None):
             ad.unlock_screen(password="1111")
             refresh_sl4a_session(ad)
             ad.ensure_screen_on()
-            ad.droid.disableDevicePassword()
+            try:
+                ad.droid.disableDevicePassword()
+            except Exception as e:
+                ad.log.warning("disableDevicePassword failed with %s", e)
             time.sleep(2)
             ad.adb.wait_for_device(timeout=180)
     refresh_sl4a_session(ad)
@@ -5199,11 +5216,16 @@ def reset_device_password(ad, device_password=None):
         ad.start_adb_logcat()
 
 
-def is_sim_locked(ad):
+def get_sim_state(ad):
     try:
-        return ad.droid.telephonyGetSimState() == SIM_STATE_PIN_REQUIRED
+        state = ad.droid.telephonyGetSimState()
     except:
-        return ad.adb.getprop("gsm.sim.state") == SIM_STATE_PIN_REQUIRED
+        state = ad.adb.getprop("gsm.sim.state")
+    return state
+
+
+def is_sim_locked(ad):
+    return get_sim_state(ad) == SIM_STATE_PIN_REQUIRED
 
 
 def unlock_sim(ad):
@@ -5214,14 +5236,16 @@ def unlock_sim(ad):
     #                   "puk_pin": "1234"}]
     if not is_sim_locked(ad):
         return True
+    else:
+        ad.is_sim_locked = True
     puk_pin = getattr(ad, "puk_pin", "1111")
     try:
         if not hasattr(ad, 'puk'):
             ad.log.info("Enter SIM pin code")
-            result = ad.droid.telephonySupplyPin(puk_pin)
+            ad.droid.telephonySupplyPin(puk_pin)
         else:
             ad.log.info("Enter PUK code and pin")
-            result = ad.droid.telephonySupplyPuk(ad.puk, puk_pin)
+            ad.droid.telephonySupplyPuk(ad.puk, puk_pin)
     except:
         # if sl4a is not available, use adb command
         ad.unlock_screen(puk_pin)
@@ -5260,7 +5284,7 @@ def system_file_push(ad, src_file_path, dst_file_path):
     """
     cmd = "%s %s" % (src_file_path, dst_file_path)
     out = ad.adb.push(cmd, timeout=300, ignore_status=True)
-    skip_sl4a= True if "sl4a.apk" in src_file_path else False
+    skip_sl4a = True if "sl4a.apk" in src_file_path else False
     if "Read-only file system" in out:
         ad.log.info("Change read-only file system")
         ad.adb.disable_verity()
@@ -5377,7 +5401,7 @@ def print_radio_info(ad, extra_msg=""):
 def wait_for_state(state_check_func,
                    state,
                    max_wait_time=MAX_WAIT_TIME_FOR_STATE_CHANGE,
-                   checking_interval=WAIT_TIME_BETWEEN_STATE_CHECK ,
+                   checking_interval=WAIT_TIME_BETWEEN_STATE_CHECK,
                    *args,
                    **kwargs):
     while max_wait_time >= 0:
@@ -5395,7 +5419,8 @@ def power_off_sim(ad, sim_slot_id=None):
             verify_func = ad.droid.telephonyGetSimState
             verify_args = []
         else:
-            ad.droid.telephonySetSimStateForSlotId(sim_slot_id, CARD_POWER_DOWN)
+            ad.droid.telephonySetSimStateForSlotId(sim_slot_id,
+                                                   CARD_POWER_DOWN)
             verify_func = ad.droid.telephonyGetSimStateForSlotId
             verify_args = [sim_slot_id]
     except Exception as e:
@@ -5408,7 +5433,7 @@ def power_off_sim(ad, sim_slot_id=None):
         return True
     else:
         ad.log.info("SIM state = %s", verify_func(*verify_args))
-        ad.log.error("Fail to power off SIM slot")
+        ad.log.warning("Fail to power off SIM slot")
         return False
 
 
@@ -5431,8 +5456,18 @@ def power_on_sim(ad, sim_slot_id=None):
         ad.log.info("SIM slot is powered on, SIM state is READY")
         return True
     elif verify_func(*verify_args) == SIM_STATE_PIN_REQUIRED:
-        ad.log.info("SIM is locked, unlocking it")
-        unlock_sim()
+        ad.log.info("SIM is pin locked")
+        return True
     else:
         ad.log.error("Fail to power on SIM slot")
         return False
+
+
+def log_screen_shot(ad, test_name):
+    file_name = "/sdcard/Pictures/screencap_%s.png" % (
+        utils.get_current_epoch_time())
+    screen_shot_path = os.path.join(ad.log_path, test_name,
+                                    "Screenshot_%s" % ad.serial)
+    utils.create_dir(screen_shot_path)
+    ad.adb.shell("screencap -p %s" % file_name)
+    ad.adb.pull("%s %s" % (file_name, screen_shot_path))

@@ -23,7 +23,6 @@ import logging
 import math
 import os
 import re
-import shellescape
 import socket
 import time
 
@@ -32,10 +31,8 @@ from acts import signals
 from acts import tracelogger
 from acts import utils
 from acts.controllers import adb
-from acts.controllers import event_dispatcher
 from acts.controllers import fastboot
-from acts.controllers import sl4a_client
-from acts.controllers.utils_lib import host_utils
+from acts.controllers.sl4a_lib import sl4a_manager
 from acts.controllers.utils_lib.ssh import connection
 from acts.controllers.utils_lib.ssh import settings
 
@@ -52,6 +49,7 @@ CRASH_REPORT_PATHS = ("/data/tombstones/", "/data/vendor/ramdump/",
                       "/data/vendor/ramdump/bluetooth")
 CRASH_REPORT_SKIPS = ("RAMDUMP_RESERVED", "RAMDUMP_STATUS", "RAMDUMP_OUTPUT",
                       "bluetooth")
+DEFAULT_QXDM_LOG_PATH = "/data/vendor/radio/diag_logs"
 BUG_REPORT_TIMEOUT = 1800
 PULL_TIMEOUT = 300
 PORT_RETRY_COUNT = 3
@@ -60,10 +58,7 @@ SL4A_APK_NAME = "com.googlecode.android_scripting"
 WAIT_FOR_DEVICE_TIMEOUT = 180
 ENCRYPTION_WINDOW = "CryptKeeper"
 DEFAULT_DEVICE_PASSWORD = "1111"
-RELEASE_ID_REGEXES = [
-    re.compile(r'[A-Za-z0-9]+\.[0-9]+\.[0-9]+'),
-    re.compile(r'N[A-Za-z0-9]+')
-]
+RELEASE_ID_REGEXES = [re.compile(r'\w+\.\d+\.\d+'), re.compile(r'N\w+')]
 
 
 class AndroidDeviceError(signals.ControllerError):
@@ -365,11 +360,7 @@ class AndroidDevice:
     device.
 
     Attributes:
-        serial: A string that's the serial number of the Androi device.
-        h_port: An integer that's the port number for adb port forwarding used
-                on the computer the Android device is connected
-        d_port: An integer  that's the port number used on the Android device
-                for adb port forwarding.
+        serial: A string that's the serial number of the Android device.
         log_path: A string that is the path where all logs collected on this
                   android device should be stored.
         log: A logger adapted from root logger with added token specific to an
@@ -382,22 +373,15 @@ class AndroidDevice:
                   via fastboot.
     """
 
-    def __init__(self,
-                 serial="",
-                 host_port=None,
-                 device_port=sl4a_client.DEFAULT_DEVICE_SIDE_PORT,
-                 ssh_connection=None):
+    def __init__(self, serial='', ssh_connection=None):
         self.serial = serial
-        self.h_port = host_port
-        self.d_port = device_port
         # logging.log_path only exists when this is used in an ACTS test run.
-        log_path_base = getattr(logging, "log_path", "/tmp/logs")
-        self.log_path = os.path.join(log_path_base, "AndroidDevice%s" % serial)
+        log_path_base = getattr(logging, 'log_path', '/tmp/logs')
+        self.log_path = os.path.join(log_path_base, 'AndroidDevice%s' % serial)
         self.log = tracelogger.TraceLogger(
             AndroidDeviceLoggerAdapter(logging.getLogger(), {
-                "serial": self.serial
+                'serial': self.serial
             }))
-        self._droid_sessions = {}
         self._event_dispatchers = {}
         self.adb_logcat_process = None
         self.adb_logcat_file_path = None
@@ -410,15 +394,13 @@ class AndroidDevice:
         self.skip_sl4a = False
         self.crash_report = None
         self.data_accounting = collections.defaultdict(int)
+        self._sl4a_manager = sl4a_manager.Sl4aManager(self.adb)
 
     def clean_up(self):
         """Cleans up the AndroidDevice object and releases any resources it
         claimed.
         """
         self.stop_services()
-        if self.h_port:
-            self.adb.remove_tcp_forward(self.h_port)
-            self.h_port = None
         if self._ssh_connection:
             self._ssh_connection.close()
 
@@ -432,6 +414,7 @@ class AndroidDevice:
 
         Args:
             skip_sl4a: Does not attempt to start SL4A if True.
+            skip_setup_wizard: Whether or not to skip the setup wizard.
         """
         if skip_setup_wizard:
             self.exit_setup_wizard()
@@ -513,8 +496,7 @@ class AndroidDevice:
 
     @property
     def model(self):
-        """The Android code name for the device.
-        """
+        """The Android code name for the device."""
         # If device is in bootloader mode, get mode name from fastboot.
         if self.is_bootloader:
             out = self.fastboot.getvar("product").strip()
@@ -534,50 +516,27 @@ class AndroidDevice:
 
     @property
     def droid(self):
-        """The first sl4a session initiated on this device. None if there isn't
-        one.
-        """
-        try:
-            session_id = sorted(self._droid_sessions)[0]
-            return self._droid_sessions[session_id][0]
-        except IndexError:
+        """Returns the RPC Service of the first Sl4aSession created."""
+        if len(self._sl4a_manager.sessions) > 0:
+            session_id = sorted(self._sl4a_manager.sessions.keys())[0]
+            return self._sl4a_manager.sessions[session_id].rpc_client
+        else:
             return None
 
     @property
     def ed(self):
-        """The first event_dispatcher instance created on this device. None if
-        there isn't one.
-        """
-        try:
-            session_id = sorted(self._event_dispatchers)[0]
-            return self._event_dispatchers[session_id]
-        except IndexError:
+        """Returns the event dispatcher of the first Sl4aSession created."""
+        if len(self._sl4a_manager.sessions) > 0:
+            session_id = sorted(self._sl4a_manager.sessions.keys())[0]
+            return self._sl4a_manager.sessions[
+                session_id].get_event_dispatcher()
+        else:
             return None
 
     @property
-    def droids(self):
-        """A list of the active sl4a sessions on this device.
-
-        If multiple connections exist for the same session, only one connection
-        is listed.
-        """
-        keys = sorted(self._droid_sessions)
-        results = []
-        for k in keys:
-            results.append(self._droid_sessions[k][0])
-        return results
-
-    @property
-    def eds(self):
-        """A list of the event_dispatcher objects on this device.
-
-        The indexing of the list matches that of the droids property.
-        """
-        keys = sorted(self._event_dispatchers)
-        results = []
-        for k in keys:
-            results.append(self._event_dispatchers[k])
-        return results
+    def sl4a_sessions(self):
+        """Returns a dictionary of session ids to sessions."""
+        return list(self._sl4a_manager.sessions)
 
     @property
     def is_adb_logcat_on(self):
@@ -650,69 +609,12 @@ class AndroidDevice:
             >>> ad = AndroidDevice()
             >>> droid, ed = ad.get_droid()
         """
-        forward_success = False
-        last_error = None
-        for _ in range(PORT_RETRY_COUNT):
-            if not self.h_port or not host_utils.is_port_available(
-                    self.h_port):
-                self.h_port = host_utils.get_available_host_port()
-            try:
-                self.adb.tcp_forward(self.h_port, self.d_port)
-                forward_success = True
-                break
-            except adb.AdbError as e:
-                last_error = e
-                pass
-        if not forward_success:
-            self.log.error(last_error)
-            raise last_error
-
-        for i in range(PORT_RETRY_COUNT):
-            try:
-                if self.is_rogue_sl4a_running():
-                    self.log.info("Stop rogue sl4a")
-                    self.stop_sl4a()
-                    time.sleep(15)
-                self.log.info("Start sl4a apk")
-                self.start_sl4a()
-                time.sleep(5)
-                droid = self.start_new_session()
-                if handle_event:
-                    ed = self.get_dispatcher(droid)
-                    return droid, ed
-                return droid
-            except Exception as e:
-                self.log.warning("get_droid with exception: %s", e)
-                if i == PORT_RETRY_COUNT - 1:
-                    raise
-
-    def is_rogue_sl4a_running(self):
-        """Returns true if SL4A was started by a process other than ACTS.
-
-        If SL4A is started by a process other than ACTS, the port will be set to
-        something other than sl4a_client.DEFAULT_DEVICE_SIDE_PORT. This causes
-        SL4A to be up and running, but nearly impossible to talk to.
-        """
-        sl4a_pid = self.get_package_pid(SL4A_APK_NAME)
-        if sl4a_pid is not None:
-            sl4a_port_hex = '{0:02x}'.format(
-                sl4a_client.DEFAULT_DEVICE_SIDE_PORT).upper()
-            port_is_open = (
-                # Get the tcp info
-                'cat /proc/%s/net/tcp | '
-                # Remove the space padding
-                'tr -s " " | '
-                # Grab the 4th column (rem_address)
-                'cut -d " " -f 4 | '
-                # Grab the port from that address
-                'cut -d ":" -f 2 | '
-                # Find the port we are looking for
-                'grep %s')
-            # If the resulting string from the command is empty, SL4A does not
-            # have a port open for ACTS to listen to.
-            return not bool(
-                self.adb.shell(port_is_open % (sl4a_pid, sl4a_port_hex)))
-        return False
+        session = self._sl4a_manager.create_session()
+        droid = session.rpc_client
+        if handle_event:
+            ed = session.get_event_dispatcher()
+            return droid, ed
+        return droid
 
     def get_package_pid(self, package_name):
         """Gets the pid for a given package. Returns None if not running.
@@ -757,17 +659,7 @@ class AndroidDevice:
         Returns:
             ed: An EventDispatcher for specified session.
         """
-        ed_key = self.serial + str(droid.uid)
-        if ed_key in self._event_dispatchers:
-            if self._event_dispatchers[ed_key] is None:
-                raise AndroidDeviceError("EventDispatcher Key Empty")
-            self.log.debug("Returning existing key %s for event dispatcher!",
-                           ed_key)
-            return self._event_dispatchers[ed_key]
-        event_droid = self.add_new_connection_to_session(droid.uid)
-        ed = event_dispatcher.EventDispatcher(event_droid)
-        self._event_dispatchers[ed_key] = ed
-        return ed
+        return self._sl4a_manager.sessions[droid.uid].get_event_dispatcher()
 
     def _is_timestamp_in_range(self, target, log_begin_time, log_end_time):
         low = acts_logger.logline_timestamp_comparator(log_begin_time,
@@ -943,7 +835,7 @@ class AndroidDevice:
         return self.force_stop_apk(SL4A_APK_NAME)
 
     def start_sl4a(self):
-        sl4a_client.start_sl4a(self.adb)
+        self._sl4a_manager.start_sl4a_service()
 
     def take_bug_report(self, test_name, begin_time):
         """Takes a bug report on the device and stores it in a file.
@@ -987,13 +879,16 @@ class AndroidDevice:
                       full_out_path)
         self.adb.wait_for_device(timeout=WAIT_FOR_DEVICE_TIMEOUT)
 
-    def get_file_names(self, directory, begin_time=None, skip_files=[]):
+    def get_file_names(self, directory, begin_time=None, skip_files=[],
+                       match_string=None):
         """Get files names with provided directory."""
         cmd = "find %s -type f" % directory
         if begin_time:
             current_time = utils.get_current_epoch_time()
             seconds = int(math.ceil((current_time - begin_time) / 1000.0))
             cmd = "%s -mtime -%ss" % (cmd, seconds)
+        if match_string:
+            cmd = "%s -iname %s" % (cmd, match_string)
         for skip_file in skip_files:
             cmd = "%s ! -iname %s" % (cmd, skip_file)
         out = self.adb.shell(cmd, ignore_status=True)
@@ -1041,18 +936,11 @@ class AndroidDevice:
 
     def get_qxdm_logs(self, test_name="", begin_time=None):
         """Get qxdm logs."""
-        output = self.adb.shell("ps -ef | grep mdlog")
-        match = re.search(r"diag_mdlog.*", output)
-        log_path = None
-        if match:
-            m = re.search(r"-o (\S+)", output)
-            if m: log_path = m.group(1)
-            # Neet to sleep 20 seconds for the log to be generated
-            time.sleep(20)
-        log_path = log_path or getattr(self, "qxdm_logger_path", None)
-        if not log_path:
-            return
-        qxdm_logs = self.get_file_names(log_path, begin_time=begin_time)
+        # Sleep 10 seconds for the buffered log to be written in qxdm log file
+        time.sleep(10)
+        log_path = getattr(self, "qxdm_log_path", DEFAULT_QXDM_LOG_PATH)
+        qxdm_logs = self.get_file_names(log_path, begin_time=begin_time,
+                                        match_string="*.qmdl")
         if qxdm_logs:
             qxdm_log_path = os.path.join(self.log_path, test_name,
                                          "QXDM_%s" % self.serial)
@@ -1072,7 +960,7 @@ class AndroidDevice:
                 timeout=PULL_TIMEOUT,
                 ignore_status=True)
 
-    def start_new_session(self):
+    def start_new_session(self, max_connections=None, server_port=None):
         """Start a new session in sl4a.
 
         Also caches the droid in a dict with its uid being the key.
@@ -1085,74 +973,18 @@ class AndroidDevice:
             Sl4aException: Something is wrong with sl4a and it returned an
             existing uid to a new session.
         """
-        droid = sl4a_client.Sl4aClient(self.serial, port=self.h_port)
-        droid.open()
-        if droid.uid in self._droid_sessions:
-            raise sl4a_client.Sl4aException(
-                "SL4A returned an existing uid for a new session. Abort.")
-        self.log.info("Add new sl4a session %s", droid.uid)
-        self._droid_sessions[droid.uid] = [droid]
-        return droid
+        session = self._sl4a_manager.create_session(
+            max_connections=max_connections, server_port=server_port)
 
-    def add_new_connection_to_session(self, session_id):
-        """Create a new connection to an existing sl4a session.
-
-        Args:
-            session_id: UID of the sl4a session to add connection to.
-
-        Returns:
-            An Android object used to communicate with sl4a on the android
-                device.
-
-        Raises:
-            DoesNotExistError: Raised if the session it's trying to connect to
-            does not exist.
-        """
-        if session_id not in self._droid_sessions:
-            raise DoesNotExistError("Session %d doesn't exist." % session_id)
-        droid = sl4a_client.Sl4aClient(
-            self.serial, port=self.h_port, uid=session_id)
-        self.log.info("Open sl4a session %s", session_id)
-        droid.open(cmd=sl4a_client.Sl4aCommand.CONTINUE)
-        return droid
-
-    def terminate_session(self, session_id):
-        """Terminate a session in sl4a.
-
-        Send terminate signal to sl4a server; stop dispatcher associated with
-        the session. Clear corresponding droids and dispatchers from cache.
-
-        Args:
-            session_id: UID of the sl4a session to terminate.
-        """
-        ed_key = self.serial + str(session_id)
-        if self._event_dispatchers and ed_key in self._event_dispatchers:
-            self.log.info("Clear event dispatcher session %s", session_id)
-            self._event_dispatchers[ed_key].clean_up()
-            del self._event_dispatchers[ed_key]
-        if self._droid_sessions and (session_id in self._droid_sessions):
-            for droid in self._droid_sessions[session_id]:
-                self.log.info("Close sl4a session %s", session_id)
-                droid.closeSl4aSession(timeout=WAIT_FOR_DEVICE_TIMEOUT)
-                droid.close()
-            del self._droid_sessions[session_id]
+        self._sl4a_manager.sessions[session.uid] = session
+        return session.rpc_client
 
     def terminate_all_sessions(self):
         """Terminate all sl4a sessions on the AndroidDevice instance.
 
         Terminate all sessions and clear caches.
         """
-        if self._droid_sessions:
-            session_ids = list(self._droid_sessions.keys())
-            for session_id in session_ids:
-                try:
-                    self.terminate_session(session_id)
-                except Exception as e:
-                    self.log.exception("Failed to terminate session %d: %s",
-                                       session_id, e)
-            if self.h_port:
-                self.adb.remove_tcp_forward(self.h_port)
-                self.h_port = None
+        self._sl4a_manager.terminate_all_sessions()
 
     def run_iperf_client_nb(self,
                             server_host,
