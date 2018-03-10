@@ -20,6 +20,7 @@ import os
 import time
 
 from acts import base_test
+from acts import utils
 from acts.controllers.ap_lib import hostapd_constants as hc
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.bt import bt_power_test_utils as btutils
@@ -77,6 +78,8 @@ class PowerCoexScanTest(base_test.BaseTestClass):
 
         """
         self.dut.adb.shell(btutils.BLE_LOCATION_SCAN_DISABLE)
+        if self.brconfigs:
+            self.access_point.bridge.teardown(self.brconfigs)
         self.access_point.close()
 
     def unpack_testparams(self, bulk_params):
@@ -93,12 +96,14 @@ class PowerCoexScanTest(base_test.BaseTestClass):
 
         """
         # Measure current and plot
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
 
-        # Close AP
-        self.access_point.close()
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
 
         # Compute pass or fail check
         wputils.pass_fail_check(self, avg_current)
@@ -114,7 +119,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -140,7 +145,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -166,7 +171,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -192,7 +197,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -218,7 +223,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -250,7 +255,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -283,7 +288,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -318,7 +323,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='OFF',
             wifi_on='ON',
@@ -346,7 +351,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='OFF',
             wifi_on='ON',
@@ -385,7 +390,7 @@ class PowerCoexScanTest(base_test.BaseTestClass):
         4. Asserts pass/fail criteria based on measured power
         """
         # Set phone in the desired wireless mode
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='OFF',
             wifi_on='ON',

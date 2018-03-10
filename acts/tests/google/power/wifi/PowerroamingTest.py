@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from acts import base_test
+from acts import utils
 from acts.controllers.ap_lib import hostapd_constants as hc
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi import wifi_constants as wc
@@ -53,11 +54,16 @@ class PowerroamingTest(base_test.BaseTestClass):
 
         Bring down all AP interfaces
         """
+        self.log.info('Tearing down the test case')
+        self.mon.usb('on')
+        self.access_point_main.bridge.teardown(self.brconfigs_main)
+        self.access_point_aux.bridge.teardown(self.brconfigs_aux)
         for ap in self.access_points:
             ap.close()
 
     def teardown_class(self):
 
+        self.log.info('Tearing down the test class')
         self.mon.usb('on')
 
     def unpack_testparams(self, bulk_params):
@@ -78,9 +84,11 @@ class PowerroamingTest(base_test.BaseTestClass):
         """
         # Setup both APs
         network_main = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point_main, network_main)
+        self.brconfigs_main = wputils.ap_setup(self.access_point_main,
+                                               network_main)
         network_aux = self.aux_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point_aux, network_aux)
+        self.brconfigs_aux = wputils.ap_setup(self.access_point_aux,
+                                              network_aux)
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
         wutils.wifi_toggle_state(self.dut, True)
@@ -102,9 +110,13 @@ class PowerroamingTest(base_test.BaseTestClass):
                 self.atten_level[self.current_test_name][i])
             for i in range(self.num_atten)
         ]
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
 
@@ -119,7 +131,8 @@ class PowerroamingTest(base_test.BaseTestClass):
         network_aux = self.aux_network[hc.BAND_2G]
         # Set the same SSID for the AUX AP for fastroaming purpose
         network_aux[wc.SSID] = network_main[wc.SSID]
-        wputils.ap_setup(self.access_point_aux, network_aux)
+        self.brconfigs_aux = wputils.ap_setup(self.access_point_aux,
+                                              network_aux)
         # Set attenuator and add two networks to the phone
         self.log.info('Set attenuation to connect device to the aux AP')
         [
@@ -129,7 +142,8 @@ class PowerroamingTest(base_test.BaseTestClass):
         wutils.wifi_connect(self.dut, network_aux)
         time.sleep(5)
         # Setup the main AP
-        wputils.ap_setup(self.access_point_main, network_main)
+        self.brconfigs_main = wputils.ap_setup(self.access_point_main,
+                                               network_main)
         # Set attenuator to connect the phone to main AP
         self.log.info('Set attenuation to connect device to the main AP')
         [
@@ -145,9 +159,13 @@ class PowerroamingTest(base_test.BaseTestClass):
             self.attenuators[i].set_atten(self.atten_level[wc.AP_AUX][i])
             for i in range(self.num_atten)
         ]
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
 
@@ -156,9 +174,11 @@ class PowerroamingTest(base_test.BaseTestClass):
 
         # Setup both APs
         network_main = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point_main, network_main)
+        self.brconfigs_main = wputils.ap_setup(self.access_point_main,
+                                               network_main)
         network_aux = self.aux_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point_aux, network_aux)
+        self.brconfigs_aux = wputils.ap_setup(self.access_point_aux,
+                                              network_aux)
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
         wutils.wifi_toggle_state(self.dut, True)
@@ -172,17 +192,21 @@ class PowerroamingTest(base_test.BaseTestClass):
             for i in range(self.num_atten)
         ]
         # Toggle between two networks
+        begin_time = utils.get_current_epoch_time()
         for i in range(self.toggle_times):
             self.dut.log.info('Connecting to %s' % network_main[wc.SSID])
             self.dut.droid.wifiConnect(network_main)
             file_path, avg_current = wputils.monsoon_data_collect_save(
-                self.dut, self.mon_info, self.current_test_name, 0)
+                self.dut, self.mon_info, self.current_test_name)
             self.dut.log.info('Connecting to %s' % network_aux[wc.SSID])
             self.dut.droid.wifiConnect(network_aux)
             file_path, avg_current = wputils.monsoon_data_collect_save(
-                self.dut, self.mon_info, self.current_test_name, 0)
+                self.dut, self.mon_info, self.current_test_name)
         [plot, dt] = wputils.monsoon_data_plot(self.mon_info, file_path)
         avg_current = dt.source.data['y0'][0]
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
 
@@ -191,9 +215,11 @@ class PowerroamingTest(base_test.BaseTestClass):
 
         # Setup both APs
         network_main = self.main_network[hc.BAND_5G]
-        wputils.ap_setup(self.access_point_main, network_main)
+        self.brconfigs_main = wputils.ap_setup(self.access_point_main,
+                                               network_main)
         network_aux = self.aux_network[hc.BAND_5G]
-        wputils.ap_setup(self.access_point_aux, network_aux)
+        self.brconfigs_aux = wputils.ap_setup(self.access_point_aux,
+                                              network_aux)
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
         wutils.wifi_toggle_state(self.dut, True)
@@ -205,17 +231,21 @@ class PowerroamingTest(base_test.BaseTestClass):
             for i in range(self.num_atten)
         ]
         # Toggle between two networks
+        begin_time = utils.get_current_epoch_time()
         for i in range(self.toggle_times):
             self.dut.log.info('Connecting to %s' % network_main[wc.SSID])
             self.dut.droid.wifiConnect(network_main)
             file_path, avg_current = wputils.monsoon_data_collect_save(
-                self.dut, self.mon_info, self.current_test_name, 0)
+                self.dut, self.mon_info, self.current_test_name)
             self.dut.log.info('Connecting to %s' % network_aux[wc.SSID])
             self.dut.droid.wifiConnect(network_aux)
             file_path, avg_current = wputils.monsoon_data_collect_save(
-                self.dut, self.mon_info, self.current_test_name, 0)
+                self.dut, self.mon_info, self.current_test_name)
         [plot, dt] = wputils.monsoon_data_plot(self.mon_info, file_path)
         avg_current = dt.source.data['y0'][0]
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
 
@@ -224,9 +254,11 @@ class PowerroamingTest(base_test.BaseTestClass):
 
         # Setup both APs
         network_main = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point_main, network_main)
+        self.brconfigs_main = wputils.ap_setup(self.access_point_main,
+                                               network_main)
         network_aux = self.aux_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point_aux, network_aux)
+        self.brconfigs_aux = wputils.ap_setup(self.access_point_aux,
+                                              network_aux)
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
         wutils.wifi_toggle_state(self.dut, True)
@@ -247,8 +279,12 @@ class PowerroamingTest(base_test.BaseTestClass):
             for i in range(self.num_atten)
         ]
         self.dut.droid.goToSleepNow()
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)

@@ -59,6 +59,7 @@ class TelLivePostflightTest(TelephonyBaseTest):
                                           "Crashes")
                 utils.create_dir(crash_path)
                 ad.pull_files(crash_diff, crash_path)
+                self._ad_take_bugreport(ad, self.test_name, self.begin_time)
         if msg:
             fail(msg)
         return True
@@ -88,13 +89,8 @@ class TelLivePostflightTest(TelephonyBaseTest):
     def test_check_data_accounting_failures(self):
         msg = ""
         for ad in self.android_devices:
-            if any([
-                    ad.data_accounting[stat]
-                    for stat in
-                ("Total_Rx_Accounting_Failure",
-                 "Total_Mobile_Accounting_Failure",
-                 "Subscriber_Mobile_Data_Usage_Accounting_Failure")
-            ]):
+            ad.log.info("data_accounting_errors: %s", dict(ad.data_accounting))
+            if any(ad.data_accounting.values()):
                 msg += "%s %s" % (ad.serial, dict(ad.data_accounting))
         if msg:
             fail(msg)
