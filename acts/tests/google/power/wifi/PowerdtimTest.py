@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from acts import base_test
+from acts import utils
 from acts.controllers.ap_lib import hostapd_constants as hc
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi import wifi_test_utils as wutils
@@ -48,12 +49,17 @@ class PowerdtimTest(base_test.BaseTestClass):
     def teardown_test(self):
         """Tear down necessary objects after test case is finished.
 
-        Bring down the AP interface.
+        Bring down the AP interface and connect device back on.
         """
+        self.log.info('Tearing down the test case')
+        self.access_point.bridge.teardown(self.brconfigs)
         self.access_point.close()
+        self.mon.usb('on')
 
     def teardown_class(self):
 
+        self.log.info('Tearing down the test class')
+        self.access_point.close()
         self.mon.usb('on')
 
     def unpack_testparams(self, bulk_params):
@@ -84,17 +90,22 @@ class PowerdtimTest(base_test.BaseTestClass):
             self.attenuators[i].set_atten(self.atten_level['zero_atten'][i])
             for i in range(self.num_atten)
         ]
-        self.log.info('Set attenuation level to connect the main AP')
-        wputils.ap_setup(self.access_point, network)
+        self.log.info('Set attenuation level to connect to the AP')
+        # Set up the AP
+        self.brconfigs = wputils.ap_setup(self.access_point, network, 20)
         wutils.wifi_connect(self.dut, network)
         if screen_status == 'OFF':
             self.dut.droid.goToSleepNow()
             self.dut.log.info('Screen is OFF')
         time.sleep(5)
         # Collect power data and plot
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Pass and fail check
         wputils.pass_fail_check(self, avg_current)
 

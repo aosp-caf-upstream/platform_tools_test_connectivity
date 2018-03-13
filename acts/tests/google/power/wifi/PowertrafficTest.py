@@ -19,8 +19,7 @@ import math
 import os
 import time
 from acts import base_test
-from acts.controllers.ap_lib import bridge_interface as bi
-from acts.controllers.ap_lib import hostapd_constants as hc
+from acts import utils
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi import wifi_test_utils as wutils
 from acts.test_utils.wifi import wifi_power_test_utils as wputils
@@ -60,15 +59,18 @@ class PowertrafficTest(base_test.BaseTestClass):
         Bring down the AP interface, delete the bridge interface, stop IPERF
         server and reset the ethernet interface for iperf traffic
         """
+        self.log.info('Tearing down the test case')
         self.iperf_server.stop()
         self.access_point.bridge.teardown(self.brconfigs)
         self.access_point.close()
         wputils.reset_host_interface(self.pkt_sender.interface)
+        self.mon.usb('on')
 
     def teardown_class(self):
         """Clean up the test class after tests finish running
 
         """
+        self.log.info('Tearing down the test class')
         self.mon.usb('on')
         self.access_point.close()
 
@@ -104,12 +106,8 @@ class PowertrafficTest(base_test.BaseTestClass):
 
         # Set up the AP
         network = self.main_network[band]
-        channel = network['channel']
-        configs = self.access_point.generate_bridge_configs(channel)
-        self.brconfigs = bi.BridgeInterfaceConfigs(configs[0], configs[1],
-                                                   configs[2])
-        self.access_point.bridge.startup(self.brconfigs)
-        wputils.ap_setup(self.access_point, network, bandwidth)
+        self.brconfigs = wputils.ap_setup(self.access_point, network,
+                                          bandwidth)
 
         # Wait for DHCP on the ethernet port and get IP as Iperf server address
         # Time out in 60 seconds if not getting DHCP address
@@ -131,7 +129,8 @@ class PowertrafficTest(base_test.BaseTestClass):
         RSSI = wputils.get_wifi_rssi(self.dut)
 
         # Construct the iperf command based on the test params
-        iperf_args = '-i 1 -t %d -J' % self.iperf_duration
+        iperf_args = '-i 1 -t {} -p {} -J'.format(self.iperf_duration,
+                                                  self.iperf_server.port)
         if traffic_type == "UDP":
             iperf_args = iperf_args + "-u -b 2g"
         if traffic_direction == "DL":
@@ -148,8 +147,9 @@ class PowertrafficTest(base_test.BaseTestClass):
             self.dut, self.iperf_server_address, iperf_args)
 
         # Collect power data and plot
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
 
         # Get IPERF results
         RESULTS_DESTINATION = os.path.join(self.iperf_server.log_path,
@@ -176,6 +176,9 @@ class PowertrafficTest(base_test.BaseTestClass):
         tag = '_RSSI_{0:d}dBm_Throughput_{1:.2f}Mbps'.format(RSSI, throughput)
         wputils.monsoon_data_plot(self.mon_info, file_path, tag)
 
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Pass and fail check
         wputils.pass_fail_check(self, avg_current)
 

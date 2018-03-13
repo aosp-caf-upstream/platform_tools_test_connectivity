@@ -18,6 +18,7 @@ import logging
 import os
 
 from acts import base_test
+from acts import utils
 from acts.test_utils.wifi import wifi_power_test_utils as wputils
 from acts.controllers.ap_lib import hostapd_constants as hc
 from acts.test_decorators import test_tracker_info
@@ -55,6 +56,8 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         """Tear down necessary objects/settings after test finishes
 
         """
+        if self.brconfigs:
+            self.access_point.bridge.teardown(self.brconfigs)
         self.access_point.close()
 
     def unpack_testparams(self, bulk_params):
@@ -71,9 +74,13 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
 
         """
         # Measure current and plot
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
 
         # Compute pass or fail check
         wputils.pass_fail_check(self, avg_current)
@@ -88,7 +95,7 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         3. Measures the power consumption
         4. Asserts pass/fail criteria based on measured power
         """
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self, bt_on='ON', wifi_on='ON', screen_status='OFF')
         self.measure_power()
 
@@ -102,7 +109,7 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         3. Measures the power consumption
         4. Asserts pass/fail criteria based on measured power
         """
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -120,7 +127,7 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         3. Measures the power consumption
         4. Asserts pass/fail criteria based on measured power
         """
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',
@@ -138,7 +145,7 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         3. Measures the power consumption
         4. Asserts pass/fail criteria based on measured power
         """
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='OFF',
@@ -156,7 +163,7 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         3. Measures the power consumption
         4. Asserts pass/fail criteria based on measured power
         """
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='OFF',
             wifi_on='ON',
@@ -175,7 +182,7 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         3. Measures the power consumption
         4. Asserts pass/fail criteria based on measured power
         """
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='OFF',
             wifi_on='ON',
@@ -194,7 +201,7 @@ class PowerCoexBaseTest(base_test.BaseTestClass):
         3. Measures the power consumption
         4. Asserts pass/fail criteria based on measured power
         """
-        wputils.setup_phone_wireless(
+        self.brconfigs = wputils.setup_phone_wireless(
             test_class=self,
             bt_on='ON',
             wifi_on='ON',

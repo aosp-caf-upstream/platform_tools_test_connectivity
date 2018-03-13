@@ -19,7 +19,7 @@ import os
 import time
 
 from acts import base_test
-from acts.controllers.ap_lib import bridge_interface as bi
+from acts import utils
 from acts.controllers.ap_lib import hostapd_constants as hc
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi import wifi_test_utils as wutils
@@ -69,15 +69,18 @@ class PowermulticastTest(base_test.BaseTestClass):
         Bring down the AP interface, delete the bridge interface, stop the
         packet sender, and reset the ethernet interface for the packet sender
         """
+        self.log.info('Tearing down the test case')
         self.pkt_sender.stop_sending(ignore_status=True)
         self.access_point.bridge.teardown(self.brconfigs)
         self.access_point.close()
         wputils.reset_host_interface(self.pkt_sender.interface)
+        self.mon.usb('on')
 
     def teardown_class(self):
         """Clean up the test class after tests finish running
 
         """
+        self.log.info('Tearing down the test class')
         self.mon.usb('on')
         self.pkt_sender.stop_sending(ignore_status=True)
         self.access_point.close()
@@ -106,13 +109,8 @@ class PowermulticastTest(base_test.BaseTestClass):
             self.attenuators[attn].set_atten(
                 self.atten_level['zero_atten'][attn])
         self.log.info('Set attenuation level to all zero')
-        channel = network['channel']
         iface_eth = self.pkt_sender.interface
-        brconfigs = self.access_point.generate_bridge_configs(channel)
-        self.brconfigs = bi.BridgeInterfaceConfigs(brconfigs[0], brconfigs[1],
-                                                   brconfigs[2])
-        self.access_point.bridge.startup(self.brconfigs)
-        wputils.ap_setup(self.access_point, network)
+        self.brconfigs = wputils.ap_setup(self.access_point, network)
         wutils.wifi_connect(self.dut, network)
 
         # Wait for DHCP with timeout of 60 seconds
@@ -134,9 +132,13 @@ class PowermulticastTest(base_test.BaseTestClass):
         self.pkt_sender.start_sending(packet, self.interval)
 
         # Measure current and plot
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
 
         # Compute pass or fail check
         wputils.pass_fail_check(self, avg_current)

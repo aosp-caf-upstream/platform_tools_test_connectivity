@@ -43,6 +43,8 @@ from acts.test_utils.tel.tel_test_utils import abort_all_tests
 from acts.test_utils.tel.tel_test_utils import ensure_phones_default_state
 from acts.test_utils.tel.tel_test_utils import ensure_phones_idle
 from acts.test_utils.tel.tel_test_utils import print_radio_info
+from acts.test_utils.tel.tel_test_utils import reboot_device
+from acts.test_utils.tel.tel_test_utils import refresh_sl4a_session
 from acts.test_utils.tel.tel_test_utils import run_multithread_func
 from acts.test_utils.tel.tel_test_utils import setup_droid_properties
 from acts.test_utils.tel.tel_test_utils import set_phone_screen_on
@@ -65,6 +67,7 @@ class TelephonyBaseTest(BaseTestClass):
         self.logger_sessions = []
 
         self.log_path = getattr(logging, "log_path", None)
+        self.qxdm_log = self.user_params.get("qxdm_log", True)
         qxdm_log_mask_cfg = self.user_params.get("qxdm_log_mask_cfg", None)
         if isinstance(qxdm_log_mask_cfg, list):
             qxdm_log_mask_cfg = qxdm_log_mask_cfg[0]
@@ -75,13 +78,14 @@ class TelephonyBaseTest(BaseTestClass):
             if not hasattr(ad, "init_log_path"):
                 ad.init_log_path = ad.log_path
             ad.log_path = self.log_path
+            print_radio_info(ad)
             if not unlock_sim(ad):
                 abort_all_tests(ad.log, "unable to unlock SIM")
             ad.wakeup_screen()
             ad.adb.shell("input keyevent 82")
-            ad.qxdm_log = getattr(ad, "qxdm_log", True)
-            qxdm_log_mask = getattr(ad, "qxdm_log_mask", None)
+            ad.qxdm_log = getattr(ad, "qxdm_log", self.qxdm_log)
             if ad.qxdm_log:
+                qxdm_log_mask = getattr(ad, "qxdm_log_mask", None)
                 if qxdm_log_mask_cfg:
                     qxdm_mask_path = DEFAULT_QXDM_LOG_PATH
                     ad.adb.shell("mkdir %s" % qxdm_mask_path)
@@ -89,17 +93,15 @@ class TelephonyBaseTest(BaseTestClass):
                                 qxdm_mask_path)
                     ad.adb.push("%s %s" % (qxdm_log_mask_cfg, qxdm_mask_path))
                     mask_file_name = os.path.split(qxdm_log_mask_cfg)[-1]
-                    qxdm_log_mask = os.path.join(qxdm_mask_path, mask_file_name)
+                    qxdm_log_mask = os.path.join(qxdm_mask_path,
+                                                 mask_file_name)
                 set_qxdm_logger_command(ad, mask=qxdm_log_mask)
-            print_radio_info(ad)
-
-        if getattr(self, "qxdm_log", True):
-            start_qxdm_loggers(self.log, self.android_devices,
-                               utils.get_current_epoch_time())
-            for ad in self.android_devices:
                 ad.adb.pull(
                     "/firmware/image/qdsp6m.qdb %s" % ad.init_log_path,
                     ignore_status=True)
+
+        start_qxdm_loggers(self.log, self.android_devices,
+                           utils.get_current_epoch_time())
         self.skip_reset_between_cases = self.user_params.get(
             "skip_reset_between_cases", True)
 
@@ -111,63 +113,51 @@ class TelephonyBaseTest(BaseTestClass):
             test_id = "%s:%s:%s" % (self.__class__.__name__, self.test_name,
                                     self.log_begin_time.replace(' ', '-'))
             self.test_id = test_id
-            log_string = "[Test ID] %s" % test_id
-            self.log.info(log_string)
             self.result_detail = ""
-            no_crash = True
-            try:
+            tries = 2 if self.user_params.get("telephony_auto_rerun") else 1
+            for i in range(tries):
+                result = True
+                log_string = "[Test ID] %s" % test_id
+                if i > 1:
+                    log_string = "[Rerun]%s" % log_string
+                    self.teardown_test()
+                    self.setup_test()
+                self.log.info(log_string)
                 for ad in self.android_devices:
                     ad.log_path = self.log_path
-                    if getattr(ad, "droid"):
+                    try:
                         ad.droid.logI("Started %s" % log_string)
-                result = fn(self, *args, **kwargs)
-                for ad in self.android_devices:
-                    if getattr(ad, "droid"):
-                        ad.droid.logI("Finished %s" % log_string)
-                    new_crash = ad.check_crash_report(self.test_name,
-                                                      self.begin_time, result)
-                    if self.user_params.get("check_crash", True) and new_crash:
-                        msg = "Find new crash reports %s" % new_crash
-                        ad.log.error(msg)
-                        if self.result_detail:
-                            self.result_detail = "%s %s %s" % (
-                                self.result_detail, ad.serial, msg)
-                        else:
-                            self.result_detail = "%s %s" % (ad.serial, msg)
-                        no_crash = False
-                if not result and self.user_params.get("telephony_auto_rerun"):
-                    self.teardown_test()
-                    # re-run only once, if re-run pass, mark as pass
-                    log_string = "[Rerun Test ID] %s. 1st run failed." % test_id
-                    self.log.info(log_string)
-                    self.setup_test()
-                    for ad in self.android_devices:
-                        if getattr(ad, "droid"):
-                            ad.droid.logI("Rerun Started %s" % log_string)
+                    except Exception as e:
+                        ad.log.warning(e)
+                        refresh_sl4a_session(ad)
+                try:
                     result = fn(self, *args, **kwargs)
-                    if result is True:
-                        self.log.info("Rerun passed.")
-                    elif result is False:
-                        self.log.info("Rerun failed.")
-                    else:
-                        # In the event that we have a non-bool or null
-                        # retval, we want to clearly distinguish this in the
-                        # logs from an explicit failure, though the test will
-                        # still be considered a failure for reporting purposes.
-                        self.log.info("Rerun indeterminate.")
-                        result = False
-                result = result and no_crash
-                if result:
-                    asserts.explicit_pass(self.result_detail)
-                else:
+                except (TestSignal, TestAbortClass, TestAbortAll) as signal:
+                    if self.result_detail:
+                        signal.details = self.result_detail
+                    raise
+                except Exception as e:
+                    self.log.error(traceback.format_exc())
                     asserts.fail(self.result_detail)
-            except (TestSignal, TestAbortClass, TestAbortAll) as signal:
-                if self.result_detail:
-                    signal.details = self.result_detail
-                raise
-            except Exception as e:
-                self.log.error(str(e))
-                self.log.error(traceback.format_exc())
+                for ad in self.android_devices:
+                    try:
+                        ad.droid.logI("Finished %s" % log_string)
+                    except Exception as e:
+                        ad.log.warning(e)
+                        refresh_sl4a_session(ad)
+                if result: break
+            if self.user_params.get("check_crash", True):
+                new_crash = ad.check_crash_report(self.test_name,
+                                                  self.begin_time, True)
+                if new_crash:
+                    msg = "Find new crash reports %s" % new_crash
+                    ad.log.error(msg)
+                    self.result_detail = "%s %s %s" % (self.result_detail,
+                                                       ad.serial, msg)
+                    result = False
+            if result:
+                asserts.explicit_pass(self.result_detail)
+            else:
                 asserts.fail(self.result_detail)
 
         return _safe_wrap_test_case
@@ -276,6 +266,7 @@ class TelephonyBaseTest(BaseTestClass):
 
     def teardown_class(self):
         stop_qxdm_loggers(self.log, self.android_devices)
+        ensure_phones_default_state(self.log, self.android_devices)
         try:
             for ad in self.android_devices:
                 ad.droid.disableDevicePassword()
@@ -306,9 +297,6 @@ class TelephonyBaseTest(BaseTestClass):
         else:
             ensure_phones_default_state(self.log, self.android_devices)
 
-    def teardown_test(self):
-        return True
-
     def on_exception(self, test_name, begin_time):
         self._pull_diag_logs(test_name, begin_time)
         self._take_bug_report(test_name, begin_time)
@@ -326,7 +314,7 @@ class TelephonyBaseTest(BaseTestClass):
         extra_qxdm_logs_in_seconds = self.user_params.get(
             "extra_qxdm_logs_in_seconds", 60 * 3)
         result = True
-        if getattr(ad, "qxdm_log", False):
+        if getattr(ad, "qxdm_log", True):
             # Gather qxdm log modified 3 minutes earlier than test start time
             if begin_time:
                 qxdm_begin_time = begin_time - 1000 * extra_qxdm_logs_in_seconds
@@ -348,11 +336,12 @@ class TelephonyBaseTest(BaseTestClass):
 
         log_begin_time = getattr(ad, "test_log_begin_time", None)\
                          or acts_logger.epoch_to_log_line_timestamp(begin_time - 1000 * 60)
-        log_path = os.path.join(self.log_path, test_name, "%s_%s.logcat" % (
-            ad.serial, begin_time))
+        log_path = os.path.join(self.log_path, test_name,
+                                "%s_%s.logcat" % (ad.serial, begin_time))
         try:
-            ad.adb.logcat('b all -d -t "%s" > %s' % (
-                log_begin_time, log_path), timeout=120)
+            ad.adb.logcat(
+                'b all -d -v year -t "%s" > %s' % (log_begin_time, log_path),
+                timeout=120)
         except Exception as e:
             ad.log.error("Failed to get logcat with error %s", e)
             result = False
@@ -361,18 +350,23 @@ class TelephonyBaseTest(BaseTestClass):
     def _take_bug_report(self, test_name, begin_time):
         if self._skip_bug_report():
             return
-        dev_num = getattr(self, "number_of_devices", None) or len(self.android_devices)
+        dev_num = getattr(self, "number_of_devices", None) or len(
+            self.android_devices)
         tasks = [(self._ad_take_bugreport, (ad, test_name, begin_time))
                  for ad in self.android_devices[:dev_num]]
         tasks.extend([(self._ad_take_extra_logs, (ad, test_name, begin_time))
                       for ad in self.android_devices[:dev_num]])
         run_multithread_func(self.log, tasks)
+        for ad in self.android_devices[:dev_num]:
+            if getattr(ad, "reboot_to_recover", False):
+                reboot_device(ad)
+                ad.reboot_to_recover = False
+        if not self.user_params.get("zip_log", False): return
         src_dir = os.path.join(self.log_path, test_name)
         file_name = "%s_%s" % (src_dir, begin_time)
         self.log.info("Zip folder %s to %s.zip", src_dir, file_name)
         shutil.make_archive(file_name, "zip", src_dir)
         shutil.rmtree(src_dir)
-
 
     def _block_all_test_cases(self, tests):
         """Over-write _block_all_test_case in BaseTestClass."""

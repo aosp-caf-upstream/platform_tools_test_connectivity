@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from acts import base_test
+from acts import utils
 from acts.controllers.ap_lib import hostapd_constants as hc
 from acts.test_decorators import test_tracker_info
 from acts.test_utils.wifi import wifi_test_utils as wutils
@@ -85,20 +86,33 @@ class PowerscanTest(base_test.BaseTestClass):
     def teardown_test(self):
         """Tear down necessary objects after test case is finished.
 
-        Bring down the AP interface
+        Bring down the AP interface and connect device back online
         """
+        self.log.info('Tearing down the test case')
+        self.access_point.bridge.teardown(self.brconfigs)
         self.access_point.close()
+        self.mon.usb('on')
 
     def teardown_class(self):
 
+        self.log.info('Tearing down the test class')
+        self.access_point.close()
         self.mon.usb('on')
 
-    def powrapk_scan_test_func(self, scan_command):
+    def powrapk_scan_test_func(self, scan_command, band):
         """Test function for power.apk triggered scans.
         Args:
             scan_command: the adb shell command to trigger scans
 
         """
+        network = self.main_network[band]
+        self.brconfigs = wputils.ap_setup(self.access_point, network)
+        self.log.info('Set attenuation to get high RSSI at {}'.format(band))
+        [
+            self.attenuators[i].set_atten(
+                self.atten_level[self.current_test_name][i])
+            for i in range(self.num_atten)
+        ]
         self.mon_info['offset'] == 0
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
@@ -109,9 +123,13 @@ class PowerscanTest(base_test.BaseTestClass):
         self.dut.adb.shell_nb(scan_command)
         self.dut.droid.goToSleepNow()
         # Collect power data and plot
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
 
@@ -119,111 +137,47 @@ class PowerscanTest(base_test.BaseTestClass):
     @test_tracker_info(uuid='e5539b01-e208-43c6-bebf-6f1e73d8d8cb')
     def test_single_shot_scan_2g_highRSSI(self):
 
-        network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
-        self.log.info('Set attenuation to get high RSSI at 2g')
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN)
+        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN, hc.BAND_2G)
 
     @test_tracker_info(uuid='14c5a762-95bc-40ea-9fd4-27126df7d86c')
     def test_single_shot_scan_2g_lowRSSI(self):
 
-        network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
-        self.log.info('Set attenuation to get low RSSI at 2g')
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN)
+        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN, hc.BAND_2G)
 
     @test_tracker_info(uuid='a6506600-c567-43b5-9c25-86b505099b97')
     def test_single_shot_scan_2g_noAP(self):
 
-        network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
-        self.log.info('Set attenuation so all AP is out of reach ')
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN)
+        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN, hc.BAND_2G)
 
     @test_tracker_info(uuid='1a458248-1159-4c8e-a39f-92fc9e69c4dd')
     def test_single_shot_scan_5g_highRSSI(self):
 
-        network = self.main_network[hc.BAND_5G]
-        wputils.ap_setup(self.access_point, network)
-        self.log.info('Set attenuation to get high RSSI at 5g')
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN)
+        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN, hc.BAND_5G)
 
     @test_tracker_info(uuid='bd4da426-a621-4131-9f89-6e5a77f321d2')
     def test_single_shot_scan_5g_lowRSSI(self):
 
-        network = self.main_network[hc.BAND_5G]
-        wputils.ap_setup(self.access_point, network)
-        self.log.info('Set attenuation to get low RSSI at 5g')
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN)
+        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN, hc.BAND_5G)
 
     @test_tracker_info(uuid='288b3add-8925-4803-81c0-53debf157ffc')
     def test_single_shot_scan_5g_noAP(self):
 
-        network = self.main_network[hc.BAND_5G]
-        wputils.ap_setup(self.access_point, network)
-        self.log.info('Set attenuation so all AP is out of reach ')
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN)
+        self.powrapk_scan_test_func(self.SINGLE_SHOT_SCAN, hc.BAND_5G)
 
     @test_tracker_info(uuid='f401c66c-e515-4f51-8ef2-2a03470d8ff2')
     def test_background_scan(self):
 
-        network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
-        self.powrapk_scan_test_func(self.BACKGROUND_SCAN)
+        self.powrapk_scan_test_func(self.BACKGROUND_SCAN, hc.BAND_5G)
 
     @test_tracker_info(uuid='fe38c1c7-937c-42c0-9381-98356639df8f')
     def test_wifi_scan_2g(self):
 
-        network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.WIFI_SCAN)
+        self.powrapk_scan_test_func(self.WIFI_SCAN, hc.BAND_2G)
 
     @test_tracker_info(uuid='8eedefd1-3a08-4ac2-ba55-5eb438def3d4')
     def test_wifi_scan_5g(self):
 
-        network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
-        [
-            self.attenuators[i].set_atten(
-                self.atten_level[self.current_test_name][i])
-            for i in range(self.num_atten)
-        ]
-        self.powrapk_scan_test_func(self.WIFI_SCAN)
+        self.powrapk_scan_test_func(self.WIFI_SCAN, hc.BAND_5G)
 
     @test_tracker_info(uuid='ff5ea952-ee31-4968-a190-82935ce7a8cb')
     def test_scan_wifidisconnected_turnonscreen(self):
@@ -237,16 +191,20 @@ class PowerscanTest(base_test.BaseTestClass):
         self.dut.droid.wakeUpNow()
         self.log.info('Now turn on screen to trigger scans')
         self.dut.adb.shell(UNLOCK_SCREEN)
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         wputils.pass_fail_check(self, avg_current)
 
     @test_tracker_info(uuid='9a836e5b-8128-4dd2-8e96-e79177810bdd')
     def test_scan_wificonnected_turnonscreen(self):
 
         network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
+        self.brconfigs = wputils.ap_setup(self.access_point, network)
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
         wutils.wifi_toggle_state(self.dut, True)
@@ -264,9 +222,13 @@ class PowerscanTest(base_test.BaseTestClass):
         self.dut.droid.wakeUpNow()
         self.log.info('Now turn on screen to trigger scans')
         self.dut.adb.shell(UNLOCK_SCREEN)
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
 
@@ -274,7 +236,7 @@ class PowerscanTest(base_test.BaseTestClass):
     def test_scan_screenoff_below_rssi_threshold(self):
 
         network = self.main_network[hc.BAND_2G]
-        wputils.ap_setup(self.access_point, network)
+        self.brconfigs = wputils.ap_setup(self.access_point, network)
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
         wutils.wifi_toggle_state(self.dut, True)
@@ -294,9 +256,13 @@ class PowerscanTest(base_test.BaseTestClass):
                 self.atten_level[self.current_test_name][i])
             for i in range(self.num_atten)
         ]
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
 
@@ -304,7 +270,7 @@ class PowerscanTest(base_test.BaseTestClass):
     def test_scan_screenoff_lost_wificonnection(self):
 
         network = self.main_network[hc.BAND_5G]
-        wputils.ap_setup(self.access_point, network)
+        self.brconfigs = wputils.ap_setup(self.access_point, network)
         # Initialize the dut to rock-bottom state
         wputils.dut_rockbottom(self.dut)
         wutils.wifi_toggle_state(self.dut, True)
@@ -324,8 +290,12 @@ class PowerscanTest(base_test.BaseTestClass):
                 self.atten_level[self.current_test_name][i])
             for i in range(self.num_atten)
         ]
+        begin_time = utils.get_current_epoch_time()
         file_path, avg_current = wputils.monsoon_data_collect_save(
-            self.dut, self.mon_info, self.current_test_name, self.bug_report)
+            self.dut, self.mon_info, self.current_test_name)
         wputils.monsoon_data_plot(self.mon_info, file_path)
+        # Take Bugreport
+        if bool(self.bug_report) == True:
+            self.dut.take_bug_report(self.test_name, begin_time)
         # Path fail check
         wputils.pass_fail_check(self, avg_current)
