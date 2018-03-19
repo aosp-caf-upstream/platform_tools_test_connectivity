@@ -48,7 +48,9 @@ def create(configs):
 
 
 def destroy(objs):
-    return
+    for obj in objs:
+        fcntl.flock(obj.mon._tempfile, fcntl.LOCK_UN)
+        obj.mon._tempfile.close()
 
 
 class MonsoonError(acts.signals.ControllerError):
@@ -106,7 +108,7 @@ class MonsoonProxy(object):
                     pass
 
                 try:  # use a lockfile to ensure exclusive access
-                    fcntl.lockf(self._tempfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(self._tempfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except IOError as e:
                     logging.error("device %s is in use", dev)
                     continue
@@ -193,8 +195,9 @@ class MonsoonProxy(object):
                 raise MonsoonError("Failed to read Monsoon status")
             calsize = struct.calcsize(STATUS_FORMAT)
             if len(read_bytes) != calsize or read_bytes[0] != 0x10:
-                raise MonsoonError("Wanted status, dropped type=0x%02x, len=%d",
-                                read_bytes[0], len(read_bytes))
+                raise MonsoonError(
+                    "Wanted status, dropped type=0x%02x, len=%d",
+                    read_bytes[0], len(read_bytes))
             status = dict(
                 zip(STATUS_FIELDS, struct.unpack(STATUS_FORMAT, read_bytes)))
             p_type = status["packetType"]
@@ -352,6 +355,8 @@ class MonsoonProxy(object):
     def _SendStruct(self, fmt, *args):
         """Pack a struct (without length or checksum) and send it.
         """
+        # Flush out the input buffer before sending data
+        self._FlushInput()
         data = struct.pack(fmt, *args)
         data_len = len(data) + 1
         checksum = (data_len + sum(bytearray(data))) % 256
@@ -384,7 +389,7 @@ class MonsoonProxy(object):
 
     def _FlushInput(self):
         """ Flush all read data until no more available. """
-        self.ser.flush()
+        self.ser.reset_input_buffer()
         flushed = 0
         while True:
             ready_r, ready_w, ready_x = select.select([self.ser], [],
@@ -394,7 +399,8 @@ class MonsoonProxy(object):
             elif len(ready_r) > 0:
                 flushed += 1
                 self.ser.read(1)  # This may cause underlying buffering.
-                self.ser.flush()  # Flush the underlying buffer too.
+                self.ser.reset_input_buffer(
+                )  # Flush the underlying buffer too.
             else:
                 break
         # if flushed > 0:
@@ -640,6 +646,8 @@ class Monsoon(object):
         if "device" in kwargs:
             device = kwargs["device"]
         self.mon = MonsoonProxy(serialno=serial, device=device)
+        self.dev = self.mon.ser.name
+        self.serial = serial
         self.dut = None
 
     def attach_device(self, dut):
@@ -909,6 +917,65 @@ class Monsoon(object):
                 self.dut.droid.goToSleepNow()
         return results
 
+    def disconnect_dut(self):
+        """Disconnect DUT from monsoon.
+
+        Stop the sl4a service on the DUT and disconnect USB connection
+        raises:
+            MonsoonError: monsoon erro trying to disconnect usb
+        """
+        try:
+            self.dut.stop_services()
+            time.sleep(1)
+            self.usb("off")
+        except Exception as e:
+            raise MonsoonError(
+                "Error happended trying to disconnect DUT from Monsoon")
+
+    def monsoon_usb_auto(self):
+        """Set monsoon USB to auto to ready the device for power measurement.
+
+        Stop the sl4a service on the DUT and disconnect USB connection
+        raises:
+            MonsoonError: monsoon erro trying to set usbpassthrough to auto
+        """
+        try:
+            self.dut.stop_services()
+            time.sleep(1)
+            self.usb("auto")
+        except Exception as e:
+            raise MonsoonError(
+                "Error happended trying to set Monsoon usbpassthrough to auto")
+
+    def reconnect_dut(self):
+        """Reconnect DUT to monsoon and start sl4a services.
+
+        raises:
+            MonsoonError: monsoon erro trying to reconnect usb
+        Turn usbpassthrough on and start the sl4a services.
+        """
+        self.log.info("Reconnecting dut.")
+        try:
+            # If wait for device failed, reset monsoon and try it again, if
+            # this still fails, then raise
+            try:
+                self._wait_for_device(self.dut)
+            except acts.utils.TimeoutError:
+                self.log.info('Retry-reset monsoon and connect again')
+                self.usb('off')
+                time.sleep(1)
+                self.usb('on')
+                self._wait_for_device(self.dut)
+            # Wait for device to come back online.
+            time.sleep(2)
+            self.dut.start_services(
+                skip_sl4a=getattr(self.dut, "skip_sl4a", False))
+            # Release wake lock to put device into sleep.
+            self.dut.droid.goToSleepNow()
+            self.log.info("Dut reconnected.")
+        except Exception as e:
+            raise MonsoonError("Error happened trying to reconnect DUT")
+
     def measure_power(self, hz, duration, tag, offset=30):
         """Measure power consumption of the attached device.
 
@@ -929,9 +996,6 @@ class Monsoon(object):
         oset = offset * hz
         data = None
         try:
-            self.dut.stop_services()
-            time.sleep(1)
-            self.usb("off")
             data = self.take_samples(hz, num, sample_offset=oset)
             if not data:
                 raise MonsoonError(
@@ -940,23 +1004,17 @@ class Monsoon(object):
             self.log.info("Measurement summary: %s", repr(data))
         finally:
             self.mon.StopDataCollection()
-            self.log.info("Finished taking samples, reconnecting to dut.")
-            self.usb("on")
-            # If wait for device failed, reset monsoon and try it again, if
-            # this still fails, then raise
-            try:
-                self._wait_for_device(self.dut)
-            except acts.utils.TimeoutError:
-                self.log.info('Retry-reset monsoon and connect again')
-                self.usb('off')
-                time.sleep(1)
-                self.usb('on')
-                self._wait_for_device(self.dut)
-            # Wait for device to come back online.
-            time.sleep(2)
-            self.dut.start_services(
-                skip_sl4a=getattr(self.dut, "skip_sl4a", False))
-            # Release wake lock to put device into sleep.
-            self.dut.droid.goToSleepNow()
-            self.log.info("Dut reconnected.")
             return data
+
+    def reconnect_monsoon(self):
+        """Reconnect Monsoon to serial port.
+
+        """
+        logging.info("Close serial connection")
+        self.mon.ser.close()
+        logging.info("Reset serial port")
+        time.sleep(5)
+        logging.info("Open serial connection")
+        self.mon.ser.open()
+        self.mon.ser.reset_input_buffer()
+        self.mon.ser.reset_output_buffer()
