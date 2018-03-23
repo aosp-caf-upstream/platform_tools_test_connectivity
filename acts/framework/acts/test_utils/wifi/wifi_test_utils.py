@@ -39,7 +39,7 @@ SHORT_TIMEOUT = 30
 # Speed of light in m/s.
 SPEED_OF_LIGHT = 299792458
 
-DEFAULT_PING_ADDR = "http://www.google.com/robots.txt"
+DEFAULT_PING_ADDR = "https://www.google.com/robots.txt"
 
 
 class WifiEnums():
@@ -211,6 +211,10 @@ class WifiEnums():
     REPORT_EVENT_AFTER_BUFFER_FULL = 0
     REPORT_EVENT_AFTER_EACH_SCAN = 1
     REPORT_EVENT_FULL_SCAN_RESULT = 2
+
+    SCAN_TYPE_LOW_LATENCY = 0
+    SCAN_TYPE_LOW_POWER = 1
+    SCAN_TYPE_HIGH_ACCURACY = 2
 
     # US Wifi frequencies
     ALL_2G_FREQUENCIES = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452,
@@ -1027,15 +1031,21 @@ def wait_for_disconnect(ad):
         raise signals.TestFailure("Device did not disconnect from the network")
 
 
-def connect_to_wifi_network(ad, network):
+def connect_to_wifi_network(ad, network, assert_on_fail=True):
     """Connection logic for open and psk wifi networks.
 
     Args:
-        params: A tuple of network info and AndroidDevice object.
+        ad: AndroidDevice to use for connection
+        network: network info of the network to connect to
+        assert_on_fail: If true, errors from wifi_connect will raise
+                        test failure signals.
     """
     start_wifi_connection_scan_and_ensure_network_found(
         ad, network[WifiEnums.SSID_KEY])
-    wifi_connect(ad, network, num_of_tries=3)
+    wifi_connect(ad,
+                 network,
+                 num_of_tries=3,
+                 assert_on_fail=assert_on_fail)
 
 
 def connect_to_wifi_network_with_id(ad, network_id, network_ssid):
@@ -1049,8 +1059,7 @@ def connect_to_wifi_network_with_id(ad, network_id, network_ssid):
              False otherwise.
 
     """
-    start_wifi_connection_scan_and_ensure_network_found(
-        ad, network[WifiEnums.SSID_KEY])
+    start_wifi_connection_scan_and_ensure_network_found(ad, network_ssid)
     wifi_connect_by_id(ad, network_id)
     connect_data = ad.droid.wifiGetConnectionInfo()
     connect_ssid = connect_data[WifiEnums.SSID_KEY]
@@ -1542,3 +1551,15 @@ def group_attenuators(attenuators):
         asserts.fail(("Either two or four attenuators are required for this "
                       "test, but found %s") % num_of_attns)
     return [attn0, attn1]
+
+
+def create_softap_config():
+    """Create a softap config with random ssid and password."""
+    ap_ssid = "softap_" + utils.rand_ascii_str(8)
+    ap_password = utils.rand_ascii_str(8)
+    logging.info("softap setup: %s %s", ap_ssid, ap_password)
+    config = {
+        WifiEnums.SSID_KEY: ap_ssid,
+        WifiEnums.PWD_KEY: ap_password,
+    }
+    return config
