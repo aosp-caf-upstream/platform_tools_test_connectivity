@@ -686,7 +686,7 @@ class DataPathTest(AwareBaseTest):
         pub_on_both=True,
         pub_on_both_same=True)
 
-  @test_tracker_info(uuid="e855dd81-45c8-4bb2-a204-7687c48ff843")
+  @test_tracker_info(uuid="57fc9d53-32ae-470f-a8b1-2fe37893687d")
   def test_ib_extra_pub_same_unsolicited_passive_open_any(self):
     """Data-path: in-band, unsolicited/passive, open encryption, any peer.
 
@@ -958,7 +958,8 @@ class DataPathTest(AwareBaseTest):
     """
     num_events = 0
     while num_events != len(req_keys):
-      event = autils.wait_for_event(dut, cconsts.EVENT_NETWORK_CALLBACK)
+      event = autils.wait_for_event(dut, cconsts.EVENT_NETWORK_CALLBACK,
+                                    timeout=autils.EVENT_NDP_TIMEOUT)
       if (event["data"][cconsts.NETWORK_CB_KEY_EVENT] ==
           cconsts.NETWORK_CB_LINK_PROPERTIES_CHANGED):
         if event["data"][cconsts.NETWORK_CB_KEY_ID] in req_keys:
@@ -1234,6 +1235,8 @@ class DataPathTest(AwareBaseTest):
     dut1_req_keys = []
     dut2_aware_ifs = []
     dut1_aware_ifs = []
+    dut2_aware_ipv6 = []
+    dut1_aware_ipv6 = []
 
     dut2_type = aconsts.DATA_PATH_RESPONDER
     dut1_type = aconsts.DATA_PATH_INITIATOR
@@ -1274,20 +1277,24 @@ class DataPathTest(AwareBaseTest):
 
       # Wait for network
       dut1_net_event = autils.wait_for_event_with_keys(
-          dut1, cconsts.EVENT_NETWORK_CALLBACK, autils.EVENT_TIMEOUT,
+          dut1, cconsts.EVENT_NETWORK_CALLBACK, autils.EVENT_NDP_TIMEOUT,
           (cconsts.NETWORK_CB_KEY_EVENT,
            cconsts.NETWORK_CB_LINK_PROPERTIES_CHANGED),
           (cconsts.NETWORK_CB_KEY_ID, dut1_req_key))
       dut2_net_event = autils.wait_for_event_with_keys(
-          dut2, cconsts.EVENT_NETWORK_CALLBACK, autils.EVENT_TIMEOUT,
+          dut2, cconsts.EVENT_NETWORK_CALLBACK, autils.EVENT_NDP_TIMEOUT,
           (cconsts.NETWORK_CB_KEY_EVENT,
            cconsts.NETWORK_CB_LINK_PROPERTIES_CHANGED),
           (cconsts.NETWORK_CB_KEY_ID, dut2_req_key))
 
-      dut2_aware_ifs.append(
-          dut2_net_event["data"][cconsts.NETWORK_CB_KEY_INTERFACE_NAME])
-      dut1_aware_ifs.append(
-          dut1_net_event["data"][cconsts.NETWORK_CB_KEY_INTERFACE_NAME])
+      dut2_aware_if = dut2_net_event["data"][
+        cconsts.NETWORK_CB_KEY_INTERFACE_NAME]
+      dut1_aware_if = dut1_net_event["data"][
+        cconsts.NETWORK_CB_KEY_INTERFACE_NAME]
+      dut2_aware_ifs.append(dut2_aware_if)
+      dut1_aware_ifs.append(dut1_aware_if)
+      dut2_aware_ipv6.append(autils.get_ipv6_addr(dut2, dut2_aware_if))
+      dut1_aware_ipv6.append(autils.get_ipv6_addr(dut1, dut1_aware_if))
 
       if flip_init_resp:
         if dut2_is_responder:
@@ -1298,12 +1305,16 @@ class DataPathTest(AwareBaseTest):
           dut1_type = aconsts.DATA_PATH_INITIATOR
         dut2_is_responder = not dut2_is_responder
 
-    # check that we are using 2 NDIs
+    # check that we are using 2 NDIs & that they have unique IPv6 addresses
     dut1_aware_ifs = list(set(dut1_aware_ifs))
     dut2_aware_ifs = list(set(dut2_aware_ifs))
+    dut1_aware_ipv6 = list(set(dut1_aware_ipv6))
+    dut2_aware_ipv6 = list(set(dut2_aware_ipv6))
 
     self.log.info("Interface names: DUT1=%s, DUT2=%s", dut1_aware_ifs,
                   dut2_aware_ifs)
+    self.log.info("IPv6 addresses: DUT1=%s, DUT2=%s", dut1_aware_ipv6,
+                  dut2_aware_ipv6)
     self.log.info("DUT1 requests: %s", dut1_req_keys)
     self.log.info("DUT2 requests: %s", dut2_req_keys)
 
@@ -1311,6 +1322,10 @@ class DataPathTest(AwareBaseTest):
         len(dut1_aware_ifs), len(sec_configs), "Multiple DUT1 interfaces")
     asserts.assert_equal(
         len(dut2_aware_ifs), len(sec_configs), "Multiple DUT2 interfaces")
+    asserts.assert_equal(
+        len(dut1_aware_ipv6), len(sec_configs), "Multiple DUT1 IPv6 addresses")
+    asserts.assert_equal(
+        len(dut2_aware_ipv6), len(sec_configs), "Multiple DUT2 IPv6 addresses")
 
     for i in range(len(sec_configs)):
       if_name = "%s%d" % (aconsts.AWARE_NDI_PREFIX, i)
@@ -1824,6 +1839,7 @@ class DataPathTest(AwareBaseTest):
                         ib_first=True,
                         inits_on_same_dut=False)
 
+  @test_tracker_info(uuid="596caadf-028e-494b-bbce-8304ccec2cbb")
   def test_multiple_ndis_mix_ib_oob_oob_first_diff_polarity(self):
     """Validate that multiple NDIs are created for NDPs which are requested with
     different security configurations. Use a mix of in-band and out-of-band APIs
