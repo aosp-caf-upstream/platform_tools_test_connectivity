@@ -143,6 +143,33 @@ def scan_with_rtt_support_constraint(dut, support_rtt, repeat=0):
   return []
 
 
+def select_best_scan_results(scans, select_count, lowest_rssi=-80):
+  """Select the strongest 'select_count' scans in the input list based on
+  highest RSSI. Exclude all very weak signals, even if results in a shorter
+  list.
+
+  Args:
+    scans: List of scan results.
+    select_count: An integer specifying how many scans to return at most.
+    lowest_rssi: The lowest RSSI to accept into the output.
+  Returns: a list of the strongest 'select_count' scan results from the scans
+           list.
+  """
+  def takeRssi(element):
+    return element['level']
+
+  result = []
+  scans.sort(key=takeRssi, reverse=True)
+  for scan in scans:
+    if len(result) == select_count:
+      break
+    if scan['level'] < lowest_rssi:
+      break # rest are lower since we're sorted
+    result.append(scan)
+
+  return result
+
+
 def validate_ap_result(scan_result, range_result):
   """Validate the range results:
   - Successful if AP (per scan result) support 802.11mc (allowed to fail
@@ -244,6 +271,14 @@ def extract_stats(results, range_reference_mm, range_margin_mm, min_rssi,
                          the reference LCI.
      - any_lcr_mismatch: True/False - checks if all LCR results are identical to
                          the reference LCR.
+     - num_attempted_measurements: extracted list of all of the individual
+                                   number of attempted measurements.
+     - num_successful_measurements: extracted list of all of the individual
+                                    number of successful measurements.
+     - invalid_num_attempted: True/False - checks if number of attempted
+                              measurements is non-zero for successful results.
+     - invalid_num_successful: True/False - checks if number of successful
+                               measurements is non-zero for successful results.
 
   Args:
     results: List of RTT results.
@@ -264,6 +299,8 @@ def extract_stats(results, range_reference_mm, range_margin_mm, min_rssi,
   stats['num_invalid_rssi'] = 0
   stats['any_lci_mismatch'] = False
   stats['any_lcr_mismatch'] = False
+  stats['invalid_num_attempted'] = False
+  stats['invalid_num_successful'] = False
 
   range_max_mm = range_reference_mm + range_margin_mm
   range_min_mm = range_reference_mm - range_margin_mm
@@ -303,10 +340,17 @@ def extract_stats(results, range_reference_mm, range_margin_mm, min_rssi,
     if not min_rssi <= rssi <= 0:
       stats['num_invalid_rssi'] = stats['num_invalid_rssi'] + 1
 
-    num_attempted_measurements.append(
-      result[rconsts.EVENT_CB_RANGING_KEY_NUM_ATTEMPTED_MEASUREMENTS])
-    num_successful_measurements.append(
-        result[rconsts.EVENT_CB_RANGING_KEY_NUM_SUCCESSFUL_MEASUREMENTS])
+    num_attempted = result[
+      rconsts.EVENT_CB_RANGING_KEY_NUM_ATTEMPTED_MEASUREMENTS]
+    num_attempted_measurements.append(num_attempted)
+    if num_attempted == 0:
+      stats['invalid_num_attempted'] = True
+
+    num_successful = result[
+      rconsts.EVENT_CB_RANGING_KEY_NUM_SUCCESSFUL_MEASUREMENTS]
+    num_successful_measurements.append(num_successful)
+    if num_successful == 0:
+      stats['invalid_num_successful'] = True
 
     lcis.append(result[rconsts.EVENT_CB_RANGING_KEY_LCI])
     if (result[rconsts.EVENT_CB_RANGING_KEY_LCI] != reference_lci):
