@@ -77,6 +77,8 @@ class WifiStressTest(WifiBaseTest):
             self.iperf_server = self.iperf_servers[0]
         if hasattr(self, 'iperf_server'):
             self.iperf_server.start()
+            if(len(self.iperf_servers) > 1):
+                self.iperf_servers[1].start()
 
     def setup_test(self):
         self.dut.droid.wakeLockAcquireBright()
@@ -97,13 +99,15 @@ class WifiStressTest(WifiBaseTest):
         wutils.reset_wifi(self.dut)
         if hasattr(self, 'iperf_server'):
             self.iperf_server.stop()
+            if(len(self.iperf_servers) > 1):
+                self.iperf_servers[1].stop()
         if "AccessPoint" in self.user_params:
             del self.user_params["reference_networks"]
             del self.user_params["open_network"]
 
     """Helper Functions"""
 
-    def scan_and_connect_by_ssid(self, network):
+    def scan_and_connect_by_ssid(self, ad, network):
         """Scan for network and connect using network information.
 
         Args:
@@ -111,9 +115,8 @@ class WifiStressTest(WifiBaseTest):
 
         """
         ssid = network[WifiEnums.SSID_KEY]
-        wutils.start_wifi_connection_scan_and_ensure_network_found(self.dut,
-            ssid)
-        wutils.wifi_connect(self.dut, network, num_of_tries=3)
+        wutils.start_wifi_connection_scan_and_ensure_network_found(ad, ssid)
+        wutils.wifi_connect(ad, network, num_of_tries=3)
 
     def scan_and_connect_by_id(self, network, net_id):
         """Scan for network and connect using network id.
@@ -611,7 +614,7 @@ class WifiStressTest(WifiBaseTest):
         AP1_network = self.reference_networks[0]["5g"]
         AP2_network = self.reference_networks[1]["5g"]
         wutils.set_attns(self.attenuators, "AP1_on_AP2_off")
-        self.scan_and_connect_by_ssid(AP1_network)
+        self.scan_and_connect_by_ssid(self.dut, AP1_network)
         # Reduce iteration to half because each iteration does two roams.
         for count in range(int(self.stress_count/2)):
             self.log.info("Roaming iteration %d, from %s to %s", count,
